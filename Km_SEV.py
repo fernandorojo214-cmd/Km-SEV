@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+import pytz  # Importamos la librería de zonas horarias
 from streamlit_gsheets import GSheetsConnection
 
 # Configuración de la página
@@ -19,6 +20,9 @@ if df.columns.tolist() != ['Fecha', 'Nombre', 'Kilometraje Inicial', 'Kilometraj
 
 tab_inicio, tab_fin = st.tabs(["🟢 Iniciar Turno", "🔴 Finalizar Turno"])
 
+# Configurar zona horaria de CDMX
+zona_cdmx = pytz.timezone('America/Mexico_City')
+
 # --- PESTAÑA 1: INICIO DE TURNO ---
 with tab_inicio:
     st.header("Registro de Inicio")
@@ -29,22 +33,22 @@ with tab_inicio:
     
     if st.button("Registrar Inicio de Turno", type="primary"):
         if nombre_inicio:
-            # Volvemos a leer los datos más frescos justo antes de escribir
             df_actualizado = conn.read(worksheet="Hoja 1", ttl=0)
             
+            # Obtenemos la hora exacta de la CDMX en este preciso momento
+            hora_actual_cdmx = datetime.now(zona_cdmx).strftime("%Y-%m-%d %H:%M:%S")
+            
             nuevo_registro = {
-                'Fecha': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                'Fecha': hora_actual_cdmx,
                 'Nombre': nombre_inicio,
                 'Kilometraje Inicial': km_inicio,
                 'Kilometraje Final': None,
                 'Total Recorrido': None
             }
             
-            # Añadimos la fila a los datos frescos y actualizamos
             df_actualizado = pd.concat([df_actualizado, pd.DataFrame([nuevo_registro])], ignore_index=True)
             conn.update(worksheet="Hoja 1", data=df_actualizado)
             
-            # Limpiamos cualquier memoria residual
             st.cache_data.clear()
             
             st.success(f"✅ ¡Buen turno, {nombre_inicio}! Kilometraje inicial guardado.")
@@ -61,7 +65,6 @@ with tab_fin:
     
     if st.button("Registrar Fin de Turno", type="primary"):
         if nombre_fin:
-            # Volvemos a leer los datos más frescos JUSTO ANTES de hacer la resta para no borrar a nadie
             df_actualizado = conn.read(worksheet="Hoja 1", ttl=0)
             
             nombre_buscado = nombre_fin.strip().lower()
@@ -78,10 +81,8 @@ with tab_fin:
                     df_actualizado.at[idx, 'Kilometraje Final'] = km_fin
                     df_actualizado.at[idx, 'Total Recorrido'] = total_recorrido
                     
-                    # Actualizamos Google Sheets con la tabla correcta
                     conn.update(worksheet="Hoja 1", data=df_actualizado)
                     
-                    # Limpiamos memoria residual
                     st.cache_data.clear()
                     
                     nombre_original = df_actualizado.at[idx, 'Nombre']
