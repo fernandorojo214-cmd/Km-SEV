@@ -8,19 +8,24 @@ from streamlit_gsheets import GSheetsConnection
 # Configuración de la página
 st.set_page_config(page_title="Control de Flotilla", layout="centered")
 
-# --- SECCIÓN DEL LOGO (AHORA PROTEGIDA) ---
-try:
-    # Cambia "logo.png" por "logo.jpg" si subiste un formato JPG
-    if os.path.exists("logo.png"):
-        st.image("logo.png", width=250)
-except Exception:
-    # Si la imagen está corrupta, el código simplemente ignora el error en lugar de colapsar
-    pass
+# --- SECCIÓN DEL LOGO Y TÍTULO ---
+# Creamos dos columnas. [1, 4] significa que la columna 2 será 4 veces más grande que la columna 1.
+col1, col2 = st.columns([1, 4])
 
-st.title("Control de Kilometraje")
+# Todo lo que pongamos dentro de 'col1' se irá a la izquierda
+with col1:
+    try:
+        if os.path.exists("logo.png"):
+            # Reduje el ancho a 80 para que no desentone al lado del texto. Puedes cambiar este número.
+            st.image("logo.png", width=80)
+    except Exception:
+        pass
+
+# Todo lo que pongamos dentro de 'col2' se irá a la derecha del logo
+with col2:
+    st.title("Control de Kilometraje")
+
 st.divider()
-
-# ... (todo el resto del código se queda exactamente igual) ...
 
 # Conectar con Google Sheets
 conn = st.connection("gsheets", type=GSheetsConnection)
