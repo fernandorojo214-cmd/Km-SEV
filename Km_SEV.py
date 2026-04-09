@@ -23,7 +23,10 @@ with col1:
 
 # Todo lo que pongamos dentro de 'col2' se irá a la derecha del logo
 with col2:
-    st.title("Control de Kilometraje")
+    # Todo lo que pongamos dentro de 'col2' se irá a la derecha del logo
+with col2:
+    # Usamos HTML para controlar el margen superior (margin-top)
+    st.markdown("<h1 style='margin-top: -15px;'>Control de Kilometraje</h1>", unsafe_allow_html=True)
 
 st.divider()
 
