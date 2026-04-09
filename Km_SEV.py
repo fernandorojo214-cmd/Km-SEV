@@ -9,23 +9,16 @@ from streamlit_gsheets import GSheetsConnection
 st.set_page_config(page_title="Control de Flotilla", layout="centered")
 
 # --- SECCIÓN DEL LOGO Y TÍTULO ---
-# Creamos dos columnas. [1, 4] significa que la columna 2 será 4 veces más grande que la columna 1.
 col1, col2 = st.columns([1, 4])
 
-# Todo lo que pongamos dentro de 'col1' se irá a la izquierda
 with col1:
     try:
         if os.path.exists("logo.png"):
-            # Reduje el ancho a 80 para que no desentone al lado del texto. Puedes cambiar este número.
-            st.image("logo.png", width=125)
+            st.image("logo.png", width=80)
     except Exception:
         pass
 
-# Todo lo que pongamos dentro de 'col2' se irá a la derecha del logo
 with col2:
-    # Todo lo que pongamos dentro de 'col2' se irá a la derecha del logo
-with col2:
-    # Usamos HTML para controlar el margen superior (margin-top)
     st.markdown("<h1 style='margin-top: -15px;'>Control de Kilometraje</h1>", unsafe_allow_html=True)
 
 st.divider()
