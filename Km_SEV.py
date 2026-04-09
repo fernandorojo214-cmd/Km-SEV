@@ -17,7 +17,7 @@ with col1:
     try:
         if os.path.exists("logo.png"):
             # Reduje el ancho a 80 para que no desentone al lado del texto. Puedes cambiar este número.
-            st.image("logo.png", width=100)
+            st.image("logo.png", width=125)
     except Exception:
         pass
 
