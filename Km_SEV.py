@@ -19,7 +19,7 @@ with col1:
         pass
 
 with col2:
-    st.markdown("<h1 style='margin-top: -5px;'>Control de Kilometraje</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='margin-top: 5px;'>Control de Kilometraje</h1>", unsafe_allow_html=True)
 
 st.divider()
 
