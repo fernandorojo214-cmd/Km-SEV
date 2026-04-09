@@ -8,12 +8,19 @@ from streamlit_gsheets import GSheetsConnection
 # Configuración de la página
 st.set_page_config(page_title="Control de Flotilla", layout="centered")
 
-# --- SECCIÓN DEL LOGO ---
-if os.path.exists("logo.png"):
-    st.image("logo.png", width=250)
+# --- SECCIÓN DEL LOGO (AHORA PROTEGIDA) ---
+try:
+    # Cambia "logo.png" por "logo.jpg" si subiste un formato JPG
+    if os.path.exists("logo.png"):
+        st.image("logo.png", width=250)
+except Exception:
+    # Si la imagen está corrupta, el código simplemente ignora el error en lugar de colapsar
+    pass
 
-st.title("Control SEV")
+st.title("Control de Kilometraje")
 st.divider()
+
+# ... (todo el resto del código se queda exactamente igual) ...
 
 # Conectar con Google Sheets
 conn = st.connection("gsheets", type=GSheetsConnection)
