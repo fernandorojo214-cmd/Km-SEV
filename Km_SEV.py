@@ -12,7 +12,7 @@ st.set_page_config(page_title="Control de Flotilla", layout="centered")
 if os.path.exists("logo.png"):
     st.image("logo.png", width=250)
 
-st.title("Control de Kilometraje")
+st.title("Control SEV")
 st.divider()
 
 # Conectar con Google Sheets
@@ -102,7 +102,7 @@ with tab_fin:
     
     nombre_fin = st.text_input("Ingresa tu Nombre", key="nom_fin")
     km_fin = st.number_input("Kilometraje Final", min_value=0.0, step=0.1, key="km_fin")
-    carga_dia = st.text_input("Carga del Día (Ej. $500, 20 Lts, etc.)", key="carga_dia")
+    carga_dia = st.text_input("Carga del Día (Ej. $500)", key="carga_dia")
     
     if st.button("Registrar Fin de Turno", type="primary"):
         if nombre_fin:
