@@ -9,12 +9,9 @@ from streamlit_gsheets import GSheetsConnection
 st.set_page_config(page_title="Control de Flotilla", layout="centered")
 
 # --- SECCIÓN DEL LOGO ---
-# Si subes una imagen llamada 'logo.png' a tu repositorio de GitHub, aparecerá aquí.
 if os.path.exists("logo.png"):
-    # st.image coloca la imagen. Puedes ajustar el 'width' (ancho) si se ve muy grande o pequeña.
     st.image("logo.png", width=250)
 
-# Título más profesional
 st.title("Control de Kilometraje")
 st.divider()
 
@@ -23,7 +20,6 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 df = conn.read(worksheet="Hoja 1", ttl=0)
 
 # --- ACTUALIZACIÓN SEGURA DE COLUMNAS ---
-# Verificamos si falta la nueva columna "Carga del Día" y la añadimos sin borrar datos
 columnas_esperadas = ['Fecha', 'Nombre', 'Kilometraje Inicial', 'Kilometraje Final', 'Total Recorrido', 'Carga del Día']
 necesita_actualizar_columnas = False
 
@@ -36,7 +32,6 @@ if necesita_actualizar_columnas:
     df = df[columnas_esperadas]
     conn.update(worksheet="Hoja 1", data=df)
 
-# Configurar zona horaria de CDMX
 zona_cdmx = pytz.timezone('America/Mexico_City')
 
 tab_inicio, tab_fin = st.tabs(["🟢 Iniciar Turno", "🔴 Finalizar Turno"])
@@ -52,31 +47,32 @@ with tab_inicio:
     if st.button("Registrar Inicio de Turno", type="primary"):
         if nombre_inicio:
             df_actualizado = conn.read(worksheet="Hoja 1", ttl=0)
+            
+            # Forzamos a que "Carga del Día" acepte texto y símbolos
+            if 'Carga del Día' in df_actualizado.columns:
+                df_actualizado['Carga del Día'] = df_actualizado['Carga del Día'].astype(object)
+            
             ahora_cdmx = datetime.now(zona_cdmx)
             hora_actual_str = ahora_cdmx.strftime("%Y-%m-%d %H:%M:%S")
             
             # --- LÓGICA DE CORTE SEMANAL ---
-            # Buscamos la última fecha registrada que no sea un corte
             fechas_validas = df_actualizado[df_actualizado['Fecha'] != '---']['Fecha'].dropna()
             
             if not fechas_validas.empty:
                 ultima_fecha_str = fechas_validas.iloc[-1]
-                # Convertimos el texto a una fecha real para comparar (usamos coerce por si hay errores de formato)
                 ultima_fecha = pd.to_datetime(ultima_fecha_str, errors='coerce')
                 
                 if pd.notna(ultima_fecha):
-                    # Si la fecha no tiene zona horaria, se la asignamos para comparar bien
                     if ultima_fecha.tzinfo is None:
                         ultima_fecha = zona_cdmx.localize(ultima_fecha)
                     
-                    # isocalendar()[1] nos da el número de la semana del año (Lunes a Domingo)
                     if ultima_fecha.isocalendar()[1] != ahora_cdmx.isocalendar()[1] or ultima_fecha.year != ahora_cdmx.year:
                         fila_corte = {
                             'Fecha': '---',
                             'Nombre': '--- CORTE DE SEMANA ---',
-                            'Kilometraje Inicial': '---',
-                            'Kilometraje Final': '---',
-                            'Total Recorrido': '---',
+                            'Kilometraje Inicial': None, # Usamos None para dejar la celda de Excel en blanco y evitar errores numéricos
+                            'Kilometraje Final': None,
+                            'Total Recorrido': None,
                             'Carga del Día': '---'
                         }
                         df_actualizado = pd.concat([df_actualizado, pd.DataFrame([fila_corte])], ignore_index=True)
@@ -85,7 +81,7 @@ with tab_inicio:
             nuevo_registro = {
                 'Fecha': hora_actual_str,
                 'Nombre': nombre_inicio,
-                'Kilometraje Inicial': km_inicio,
+                'Kilometraje Inicial': float(km_inicio),
                 'Kilometraje Final': None,
                 'Total Recorrido': None,
                 'Carga del Día': None
@@ -106,13 +102,16 @@ with tab_fin:
     
     nombre_fin = st.text_input("Ingresa tu Nombre", key="nom_fin")
     km_fin = st.number_input("Kilometraje Final", min_value=0.0, step=0.1, key="km_fin")
-    
-    # Nuevo campo para la carga del día
     carga_dia = st.text_input("Carga del Día (Ej. $500, 20 Lts, etc.)", key="carga_dia")
     
     if st.button("Registrar Fin de Turno", type="primary"):
         if nombre_fin:
             df_actualizado = conn.read(worksheet="Hoja 1", ttl=0)
+            
+            # Forzamos flexibilidad en la columna antes de guardar
+            if 'Carga del Día' in df_actualizado.columns:
+                df_actualizado['Carga del Día'] = df_actualizado['Carga del Día'].astype(object)
+                
             nombre_buscado = nombre_fin.strip().lower()
             
             pendientes = df_actualizado[(df_actualizado['Nombre'].astype(str).str.strip().str.lower() == nombre_buscado) & 
@@ -123,13 +122,13 @@ with tab_fin:
                 try:
                     km_ini = float(df_actualizado.at[idx, 'Kilometraje Inicial'])
                 except:
-                    km_ini = 0.0 # Por si ocurre algún error de formato en el Excel
+                    km_ini = 0.0 
                 
                 if km_fin >= km_ini:
-                    total_recorrido = km_fin - km_ini
-                    df_actualizado.at[idx, 'Kilometraje Final'] = km_fin
+                    total_recorrido = float(km_fin - km_ini)
+                    df_actualizado.at[idx, 'Kilometraje Final'] = float(km_fin)
                     df_actualizado.at[idx, 'Total Recorrido'] = total_recorrido
-                    df_actualizado.at[idx, 'Carga del Día'] = carga_dia if carga_dia else "0"
+                    df_actualizado.at[idx, 'Carga del Día'] = str(carga_dia) if carga_dia else "0"
                     
                     conn.update(worksheet="Hoja 1", data=df_actualizado)
                     
