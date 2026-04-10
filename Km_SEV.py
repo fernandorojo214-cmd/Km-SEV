@@ -28,7 +28,7 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 df = conn.read(worksheet="Hoja 1", ttl=0)
 
 # --- ACTUALIZACIÓN SEGURA DE COLUMNAS ---
-columnas_esperadas = ['Fecha', 'Nombre', 'Kilometraje Inicial', 'Kilometraje Final', 'Total Recorrido', 'Carga del Día']
+columnas_esperadas = ['Fecha', 'Nombre', 'Kilometraje Inicial', 'Kilometraje Final', 'Total Recorrido', 'Carga del Día','Lugar de Carga']
 necesita_actualizar_columnas = False
 
 for col in columnas_esperadas:
@@ -59,6 +59,9 @@ with tab_inicio:
             # Forzamos a que "Carga del Día" acepte texto y símbolos
             if 'Carga del Día' in df_actualizado.columns:
                 df_actualizado['Carga del Día'] = df_actualizado['Carga del Día'].astype(object)
+
+            if 'Lugar de Carga' in df_actualizado.colums:
+                df_actualizado ['Lugar de Carga']= df_actualizado['Lugar de Carga'].astype(object)    
 
             ahora_cdmx = datetime.now(zona_cdmx)
             hora_actual_str = ahora_cdmx.strftime("%Y-%m-%d %H:%M:%S")
@@ -92,7 +95,8 @@ with tab_inicio:
                 'Kilometraje Inicial': float(km_inicio),
                 'Kilometraje Final': None,
                 'Total Recorrido': None,
-                'Carga del Día': None
+                'Carga del Día': None,
+                'Lugar de Carga': None
             }
 
             df_actualizado = pd.concat([df_actualizado, pd.DataFrame([nuevo_registro])], ignore_index=True)
@@ -111,6 +115,7 @@ with tab_fin:
     nombre_fin = st.text_input("Ingresa tu Nombre", key="nom_fin")
     km_fin = st.number_input("Kilometraje Final", min_value=0.0, step=0.1, key="km_fin")
     carga_dia = st.text_input("Carga del Día (Ej. $500)", key="carga_dia")
+    Lugar_carga = st.tex_input("Lugar de carga (Ej. Gran oso, Roma)", key="lugar_carga")
 
     if st.button("Registrar Fin de Turno", type="primary"):
         if nombre_fin:
@@ -137,6 +142,7 @@ with tab_fin:
                     df_actualizado.at[idx, 'Kilometraje Final'] = float(km_fin)
                     df_actualizado.at[idx, 'Total Recorrido'] = total_recorrido
                     df_actualizado.at[idx, 'Carga del Día'] = str(carga_dia) if carga_dia else "0"
+                    df_actualizado.at[idx, 'Lugar de Carga'] = str(Lugar_carga) if Lugar_carga else "N/A"
 
                     conn.update(worksheet="Hoja 1", data=df_actualizado)
 
@@ -144,7 +150,7 @@ with tab_fin:
 
                     nombre_original = df_actualizado.at[idx, 'Nombre']
                     st.success(f"🏁 Fin de turno registrado para {nombre_original}.")
-                    st.info(f"📊 Resumen: **{total_recorrido:.1f} km** recorridos | Carga: **{carga_dia if carga_dia else '0'}**")
+                    st.info(f"📊 Resumen: **{total_recorrido:.1f} km** recorridos | Carga: **{carga_dia if carga_dia else '0'}**| Lugar de carga: ** {Lugar_carga if Lugar_carga else 'N/A'}**")
                 else:
                     st.error(f"❌ El kilometraje final ({km_fin}) no puede ser menor al inicial ({km_ini}). Verifica tus datos.")
             else:
