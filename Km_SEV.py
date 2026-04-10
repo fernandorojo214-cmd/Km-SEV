@@ -14,7 +14,7 @@ col1, col2 = st.columns([1, 4])
 with col1:
     try:
         if os.path.exists("logo.png"):
-            st.image("logo.png", width=150)
+            st.image("logo.png", width=200)
     except Exception:
         pass
 
