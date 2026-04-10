@@ -28,7 +28,16 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 df = conn.read(worksheet="Hoja 1", ttl=0)
 
 # --- ACTUALIZACIÓN SEGURA DE COLUMNAS ---
-columnas_esperadas = ['Fecha', 'Nombre', 'Kilometraje Inicial', 'Kilometraje Final', 'Total Recorrido', 'Carga del Día','Lugar de Carga']
+columnas_esperadas = [
+    'Fecha',
+    'Nombre',
+    'Kilometraje Inicial',
+    'Kilometraje Final',
+    'Total Recorrido',
+    'Carga del Día',
+    'Lugar de Carga'
+]
+
 necesita_actualizar_columnas = False
 
 for col in columnas_esperadas:
@@ -56,17 +65,17 @@ with tab_inicio:
         if nombre_inicio:
             df_actualizado = conn.read(worksheet="Hoja 1", ttl=0)
 
-            # Forzamos a que "Carga del Día" acepte texto y símbolos
+            # Forzar tipo texto en columnas
             if 'Carga del Día' in df_actualizado.columns:
                 df_actualizado['Carga del Día'] = df_actualizado['Carga del Día'].astype(object)
 
-            if 'Lugar de Carga' in df_actualizado.colums:
-                df_actualizado ['Lugar de Carga']= df_actualizado['Lugar de Carga'].astype(object)    
+            if 'Lugar de Carga' in df_actualizado.columns:
+                df_actualizado['Lugar de Carga'] = df_actualizado['Lugar de Carga'].astype(object)
 
             ahora_cdmx = datetime.now(zona_cdmx)
             hora_actual_str = ahora_cdmx.strftime("%Y-%m-%d %H:%M:%S")
 
-            # --- LÓGICA DE CORTE SEMANAL ---
+            # --- CORTE SEMANAL ---
             fechas_validas = df_actualizado[df_actualizado['Fecha'] != '---']['Fecha'].dropna()
 
             if not fechas_validas.empty:
@@ -81,14 +90,15 @@ with tab_inicio:
                         fila_corte = {
                             'Fecha': '---',
                             'Nombre': '--- CORTE DE SEMANA ---',
-                            'Kilometraje Inicial': None, # Usamos None para dejar la celda de Excel en blanco y evitar errores numéricos
+                            'Kilometraje Inicial': None,
                             'Kilometraje Final': None,
                             'Total Recorrido': None,
-                            'Carga del Día': '---'
+                            'Carga del Día': '---',
+                            'Lugar de Carga': '---'
                         }
                         df_actualizado = pd.concat([df_actualizado, pd.DataFrame([fila_corte])], ignore_index=True)
 
-            # --- GUARDAR EL NUEVO TURNO ---
+            # --- NUEVO REGISTRO ---
             nuevo_registro = {
                 'Fecha': hora_actual_str,
                 'Nombre': nombre_inicio,
@@ -115,34 +125,41 @@ with tab_fin:
     nombre_fin = st.text_input("Ingresa tu Nombre", key="nom_fin")
     km_fin = st.number_input("Kilometraje Final", min_value=0.0, step=0.1, key="km_fin")
     carga_dia = st.text_input("Carga del Día (Ej. $500)", key="carga_dia")
-    Lugar_carga = st.tex_input("Lugar de carga (Ej. Gran oso, Roma)", key="lugar_carga")
+    lugar_carga = st.text_input("Lugar de carga (Ej. Gran oso, Roma)", key="lugar_carga")
 
     if st.button("Registrar Fin de Turno", type="primary"):
         if nombre_fin:
             df_actualizado = conn.read(worksheet="Hoja 1", ttl=0)
 
-            # Forzamos flexibilidad en la columna antes de guardar
+            # Forzar tipo texto
             if 'Carga del Día' in df_actualizado.columns:
                 df_actualizado['Carga del Día'] = df_actualizado['Carga del Día'].astype(object)
 
+            if 'Lugar de Carga' in df_actualizado.columns:
+                df_actualizado['Lugar de Carga'] = df_actualizado['Lugar de Carga'].astype(object)
+
             nombre_buscado = nombre_fin.strip().lower()
 
-            pendientes = df_actualizado[(df_actualizado['Nombre'].astype(str).str.strip().str.lower() == nombre_buscado) & 
-                            (pd.isna(df_actualizado['Kilometraje Final']) | (df_actualizado['Kilometraje Final'] == ""))]
+            pendientes = df_actualizado[
+                (df_actualizado['Nombre'].astype(str).str.strip().str.lower() == nombre_buscado) &
+                (pd.isna(df_actualizado['Kilometraje Final']) | (df_actualizado['Kilometraje Final'] == ""))
+            ]
 
             if not pendientes.empty:
                 idx = pendientes.index[-1]
+
                 try:
                     km_ini = float(df_actualizado.at[idx, 'Kilometraje Inicial'])
                 except:
-                    km_ini = 0.0 
+                    km_ini = 0.0
 
                 if km_fin >= km_ini:
                     total_recorrido = float(km_fin - km_ini)
+
                     df_actualizado.at[idx, 'Kilometraje Final'] = float(km_fin)
                     df_actualizado.at[idx, 'Total Recorrido'] = total_recorrido
                     df_actualizado.at[idx, 'Carga del Día'] = str(carga_dia) if carga_dia else "0"
-                    df_actualizado.at[idx, 'Lugar de Carga'] = str(Lugar_carga) if Lugar_carga else "N/A"
+                    df_actualizado.at[idx, 'Lugar de Carga'] = str(lugar_carga) if lugar_carga else "N/A"
 
                     conn.update(worksheet="Hoja 1", data=df_actualizado)
 
@@ -150,10 +167,10 @@ with tab_fin:
 
                     nombre_original = df_actualizado.at[idx, 'Nombre']
                     st.success(f"🏁 Fin de turno registrado para {nombre_original}.")
-                    st.info(f"📊 Resumen: **{total_recorrido:.1f} km** recorridos | Carga: **{carga_dia if carga_dia else '0'}**| Lugar de carga: ** {Lugar_carga if Lugar_carga else 'N/A'}**")
+                    st.info(f"📊 Resumen: **{total_recorrido:.1f} km** | Carga: **{carga_dia if carga_dia else '0'}** | Lugar: **{lugar_carga if lugar_carga else 'N/A'}**")
                 else:
-                    st.error(f"❌ El kilometraje final ({km_fin}) no puede ser menor al inicial ({km_ini}). Verifica tus datos.")
+                    st.error(f"❌ El kilometraje final ({km_fin}) no puede ser menor al inicial ({km_ini}).")
             else:
-                st.error("❌ No se encontró un turno activo con ese nombre. Verifica que esté escrito igual que al inicio.")
+                st.error("❌ No se encontró un turno activo con ese nombre.")
         else:
             st.warning("⚠️ Por favor, ingresa tu nombre para finalizar.")
