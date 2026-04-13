@@ -59,7 +59,7 @@ with tab_inicio:
     st.write("Completa esta sección al comenzar tu turno de servicio.")
 
     nombre_inicio = st.text_input("Nombre del Conductor", key="nom_ini")
-    km_inicio = st.number_input("Kilometraje Inicial", min_value=0.0, step=0.1, key="km_ini")
+    km_inicio = st.number_input("Kilometraje Inicial", min_value=0, step=0.1, key="km_ini")
 
     if st.button("Registrar Inicio de Turno", type="primary"):
         if nombre_inicio:
@@ -123,7 +123,7 @@ with tab_fin:
     st.write("Completa esta sección al finalizar tu turno.")
 
     nombre_fin = st.text_input("Ingresa tu Nombre", key="nom_fin")
-    km_fin = st.number_input("Kilometraje Final", min_value=0.0, step=0.1, key="km_fin")
+    km_fin = st.number_input("Kilometraje Final", min_value=0, step=0.1, key="km_fin")
     carga_dia = st.text_input("Carga del Día (Ej. $500)", key="carga_dia")
     lugar_carga = st.text_input("Lugar de carga (Ej. Gran oso, Roma)", key="lugar_carga")
 
