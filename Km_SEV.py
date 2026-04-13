@@ -20,7 +20,7 @@ with col1:
 
 with col2:
     # Puedes cambiar "SEVTrack" por el nombre que hayas elegido
-    st.markdown("<h1 style='margin-top: 25px;'>SEVTrack | Control de Flotilla SEV</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='margin-top: 25px;'>Control de Flotilla SEV</h1>", unsafe_allow_html=True)
 
 st.divider()
 
