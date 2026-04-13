@@ -14,13 +14,13 @@ col1, col2 = st.columns([1, 4])
 with col1:
     try:
         if os.path.exists("logo.png"):
-            st.image("logo.png", width=80)
+            st.image("logo.png", width=200)
     except Exception:
         pass
 
 with col2:
     # Puedes cambiar "SEVTrack" por el nombre que hayas elegido
-    st.markdown("<h1 style='margin-top: -15px;'>SEVTrack | Control de Flotilla</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='margin-top: 25px;'>SEVTrack | Control de Flotilla SEV</h1>", unsafe_allow_html=True)
 
 st.divider()
 
@@ -118,8 +118,8 @@ with tab_fin:
     # AJUSTE: value=None y placeholder añadidos
     km_fin = st.number_input("Kilometraje Final", min_value=0.0, step=0.1, value=None, placeholder="Ej. 12650.0", key="km_fin")
     
-    carga_dia = st.text_input("Carga del Día (Ej. $500, 20 Lts, etc.)", key="carga_dia")
-    lugar_carga = st.text_input("Lugar de Carga (Ej. Gasolinera Centro, Sucursal Sur, etc.)", key="lugar_carga")
+    carga_dia = st.text_input("Carga del Día (Ej. $500)", key="carga_dia")
+    lugar_carga = st.text_input("Lugar de Carga (Ej. Gran Oso, Roma, etc.)", key="lugar_carga")
     
     if st.button("Registrar Fin de Turno", type="primary"):
         # AJUSTE: Verificamos que ambos campos obligatorios tengan información
