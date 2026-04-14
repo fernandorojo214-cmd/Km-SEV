@@ -3,35 +3,35 @@ import pandas as pd
 from datetime import datetime
 import pytz
 import os
-import io
+import requests
+import base64
 from streamlit_gsheets import GSheetsConnection
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
-from google.oauth2 import service_account
 
-# --- CONFIGURACIÓN DE DRIVE (Pega aquí el ID de tu carpeta) ---
-ID_CARPETA_DRIVE = "1qpMxkMhxhHZijFDybrn24GT0R67I3Vg-" 
+# --- CONFIGURACIÓN DE IMGBB ---
+IMGBB_API_KEY = "c6fc780c833003fcc0583442a0c61f2b" 
 
-# Configuración de la página (cambio de name)
-st.set_page_config(page_title="Control de Flotilla SEV", layout="centered")
+# Configuración de la página
+st.set_page_config(page_title="Control de Flotilla", layout="centered")
 
-# --- FUNCIÓN PARA SUBIR A DRIVE ---
-def subir_a_drive(file_obj, nombre_archivo):
+# --- FUNCIÓN PARA SUBIR FOTO DEL TICKET ---
+def subir_a_imgbb(file_obj):
     try:
-        creds_info = st.secrets["connections"]["gsheets"]
-        creds = service_account.Credentials.from_service_account_info(
-            creds_info, 
-            scopes=["https://www.googleapis.com/auth/drive.file"]
-        )
-        service = build('drive', 'v3', credentials=creds)
+        url = "https://api.imgbb.com/1/upload"
+        # Convertimos la imagen a un formato que el servidor pueda leer
+        imagen_codificada = base64.b64encode(file_obj.read()).decode('utf-8')
+        payload = {
+            "key": IMGBB_API_KEY,
+            "image": imagen_codificada
+        }
+        res = requests.post(url, data=payload)
         
-        file_metadata = {'name': nombre_archivo, 'parents': [ID_CARPETA_DRIVE]}
-        media = MediaIoBaseUpload(io.BytesIO(file_obj.read()), mimetype=file_obj.type)
-        
-        file = service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
-        return file.get('webViewLink')
+        if res.status_code == 200:
+            # Si fue exitoso, extraemos el enlace (link) de la foto
+            return res.json()['data']['url']
+        else:
+            return None
     except Exception as e:
-        st.error(f"Error al subir a Drive: {e}")
+        st.error(f"Error al subir imagen: {e}")
         return None
 
 # --- SECCIÓN DEL LOGO Y TÍTULO ---
@@ -49,13 +49,11 @@ with col2:
 
 st.divider()
 
-# Conexion con Google Sheets Excel
-
+# Conectar con Google Sheets
 conn = st.connection("gsheets", type=GSheetsConnection)
 df = conn.read(worksheet="Hoja 1", ttl=0)
 
-# --- ACTUALIZACIÓN SEGURA DE COLUMNAS QUE SE VEN EN ECXEL
-
+# --- ACTUALIZACIÓN SEGURA DE COLUMNAS ---
 columnas_esperadas = ['Fecha', 'Nombre', 'Kilometraje Inicial', 'Kilometraje Final', 'Total Recorrido', 'Carga del Día', 'Lugar de Carga', 'Comentarios', 'Comprobante']
 necesita_actualizar_columnas = False
 
@@ -73,7 +71,6 @@ zona_cdmx = pytz.timezone('America/Mexico_City')
 tab_inicio, tab_fin = st.tabs(["🟢 Iniciar Turno", "🔴 Finalizar Turno"])
 
 # --- PESTAÑA 1: INICIO DE TURNO ---
-
 with tab_inicio:
     st.header("Registro de Inicio")
     st.write("Completa esta sección al comenzar tu turno de servicio.")
@@ -134,8 +131,8 @@ with tab_fin:
     lugar_carga = st.text_input("Lugar de Carga (Ej. Gran Oso, Roma, etc.)", key="lugar_carga")
     txt_comentarios = st.text_area("Comentarios (Opcional)", key="coment")
     
-    # Campo para subir la imagen o PDF
-    archivo_ticket = st.file_uploader("Subir Recibo Carga", type=["png", "jpg", "jpeg", "pdf"])
+    # Campo para subir la imagen (Limitado solo a fotos, no PDFs)
+    archivo_ticket = st.file_uploader("Subir foto recibo", type=["png", "jpg", "jpeg"])
     
     if st.button("Registrar Fin de Turno", type="primary"):
         if nombre_fin and km_fin is not None:
@@ -154,14 +151,13 @@ with tab_fin:
                 km_ini = float(df_actualizado.at[idx, 'Kilometraje Inicial'])
                 
                 if km_fin >= km_ini:
-                    # Lógica de subida de archivo
+                    # --- LÓGICA DE SUBIDA DE IMAGEN A IMGBB ---
                     link_ticket = "No subido"
                     if archivo_ticket is not None:
-                        with st.spinner("Subiendo comprobante..."):
-                            ext = archivo_ticket.name.split(".")[-1]
-                            fecha_f = datetime.now(zona_cdmx).strftime("%d-%m-%Y_%H-%M")
-                            nombre_f = f"Ticket_{nombre_fin.replace(' ','_')}_{fecha_f}.{ext}"
-                            link_ticket = subir_a_drive(archivo_ticket, nombre_f)
+                        with st.spinner("Subiendo recibo..."):
+                            url_foto = subir_a_imgbb(archivo_ticket)
+                            if url_foto:
+                                link_ticket = url_foto
 
                     total_recorrido = float(km_fin - km_ini)
                     df_actualizado.at[idx, 'Kilometraje Final'] = float(km_fin)
