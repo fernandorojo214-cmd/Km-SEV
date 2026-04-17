@@ -79,7 +79,7 @@ with tab_inicio:
                 df_actualizado = pd.concat([df_actualizado, pd.DataFrame([nuevo_registro])], ignore_index=True)
                 conn.update(worksheet="Hoja 1", data=df_actualizado)
                 st.cache_data.clear()
-                st.success(f"✅ ¡Buen turno, {nombre_inicio}! Inicio registrado.")
+                st.success(f"✅ Inicio registrado ¡Buen Viaje, {nombre_inicio}!")
         else:
             st.warning("⚠️ Ingresa nombre y kilometraje.")
 
@@ -130,11 +130,11 @@ with tab_fin:
                     st.cache_data.clear()
                     
                     # --- RESUMEN VISUAL PARA EL CONDUCTOR ---
-                    st.success(f"🏁 ¡Turno finalizado con éxito, {nombre_fin}!")
+                    st.success(f"🏁¡Turno finalizado con éxito, {nombre_fin}!")
                     
                 
-                    st.success(f"KM Recorridos, {total_recorrido} km")
-                    st.success(f"Carga ${total_dinero}")
+                    st.success(f"🚖 Km Recorridos {total_recorrido} km | 🔋 Carga ${total_dinero}")
+                    
                 
                     
                     st.balloons() # Animación de celebración opcional
