@@ -10,7 +10,7 @@ from streamlit_gsheets import GSheetsConnection
 
 # --- CONFIGURACIÓN DE IMGBB ---
 # Reemplaza con tu clave de api.imgbb.com
-IMGBB_API_KEY = "PEGA_TU_CLAVE_AQUI" 
+IMGBB_API_KEY = "c6fc780c833003fcc0583442a0c61f2b" 
 
 st.set_page_config(page_title="SEVTrack | Control de Flotilla", layout="centered")
 
