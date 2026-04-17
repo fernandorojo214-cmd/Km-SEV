@@ -132,9 +132,9 @@ with tab_fin:
                     # --- RESUMEN VISUAL PARA EL CONDUCTOR ---
                     st.success(f"🏁 ¡Turno finalizado con éxito, {nombre_fin}!")
                     
-                    m1, m2, m3 = st.columns(3)
-                    m1.metric("KM Recorridos", f"{total_recorrido:.1f} km")
-                    m2.metric("Carga", f"${total_dinero:,.2f}")
+                
+                    st.success(f"KM Recorridos, {total_recorrido} km")
+                    st.success(f"Carga ${total_dinero}")
                 
                     
                     st.balloons() # Animación de celebración opcional
