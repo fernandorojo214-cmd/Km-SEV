@@ -56,11 +56,17 @@ with tab_inicio:
     st.write("Completa esta sección al comenzar tu turno.")
     
     nombre_inicio = st.text_input("Nombre del Conductor", key="nom_ini")
-    km_inicio = st.number_input("Kilometraje Inicial", min_value=0.0, step=0.1, value=None, placeholder="Ej. 12500.5", key="km_ini")
+    km_inicio = st.number_input("Kilometraje Inicial", min_value=0.0, step=0.1, value=None, placeholder="Ej. 12500", key="km_ini")
     
     if st.button("Registrar Inicio de Turno", type="primary"):
         if nombre_inicio and km_inicio is not None:
             df_actualizado = conn.read(worksheet="Hoja 1", ttl=0)
+            
+            # --- BLINDAJE DE COLUMNAS (Corrección del error TypeError) ---
+            for col in ['Carga del Día', 'Lugar de Carga', 'Comentarios', 'Comprobante']:
+                if col not in df_actualizado.columns:
+                    df_actualizado[col] = ""
+                df_actualizado[col] = df_actualizado[col].astype("object")
             
             # Verificación de turno ya abierto
             nombre_buscado_ini = nombre_inicio.strip().lower()
@@ -87,8 +93,8 @@ with tab_inicio:
 with tab_fin:
     st.header("Registro Final")
     nombre_fin = st.text_input("Ingresa tu Nombre", key="nom_fin")
-    km_fin = st.number_input("Kilometraje Final", min_value=0.0, step=0.1, value=None, placeholder="Ej. 12650.0", key="km_fin")
-    carga_dia = st.text_input("Carga del Día (Suma automática)", placeholder="Ej: 500 + 200", key="carga_dia")
+    km_fin = st.number_input("Kilometraje Final", min_value=0.0, step=0.1, value=None, placeholder="Ej. 12650", key="km_fin")
+    carga_dia = st.text_input("Carga del Día", placeholder="Ej: 123 o 500 + 200", key="carga_dia")
     lugar_carga = st.text_input("Lugar de Carga", key="lugar_carga")
     txt_comentarios = st.text_area("Comentarios (Opcional)", key="coment")
     archivos_tickets = st.file_uploader("Subir fotos de los Tickets", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
@@ -96,6 +102,13 @@ with tab_fin:
     if st.button("Registrar Fin de Turno", type="primary"):
         if nombre_fin and km_fin is not None:
             df_actualizado = conn.read(worksheet="Hoja 1", ttl=0)
+            
+            # --- BLINDAJE DE COLUMNAS (Corrección del error TypeError) ---
+            for col in ['Carga del Día', 'Lugar de Carga', 'Comentarios', 'Comprobante']:
+                if col not in df_actualizado.columns:
+                    df_actualizado[col] = ""
+                df_actualizado[col] = df_actualizado[col].astype("object")
+
             nombre_buscado = nombre_fin.strip().lower()
             
             pendientes = df_actualizado[(df_actualizado['Nombre'].astype(str).str.strip().str.lower() == nombre_buscado) & 
@@ -131,12 +144,7 @@ with tab_fin:
                     
                     # --- RESUMEN VISUAL PARA EL CONDUCTOR ---
                     st.success(f"🏁¡Turno finalizado con éxito, {nombre_fin}!")
-                    
-                
                     st.success(f"🚖 Km Recorridos {total_recorrido} km | 🔋 Carga ${total_dinero}")
-                    
-                
-                    
                     st.balloons() # Animación de celebración opcional
                 else:
                     st.error(f"❌ El kilometraje final ({km_fin}) no puede ser menor al inicial ({km_ini}).")
