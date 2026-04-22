@@ -9,7 +9,6 @@ import re
 from streamlit_gsheets import GSheetsConnection
 
 # --- CONFIGURACIÓN DE IMGBB ---
-# Reemplaza con tu clave de api.imgbb.com
 IMGBB_API_KEY = "c6fc780c833003fcc0583442a0c61f2b" 
 
 st.set_page_config(page_title="Control de Flotilla", layout="centered")
@@ -30,6 +29,14 @@ def calcular_total_carga(texto):
     if not numeros: return 0.0
     return sum(float(n) for n in numeros)
 
+# --- SEGURIDAD: ACCESO ADMIN (BARRA LATERAL) ---
+with st.sidebar:
+    st.title("⚙️ Configuración")
+    st.write("Solo para administradores.")
+    # Contraseña por defecto: admin123 (Cámbiala por la tuya)
+    password_admin = st.text_input("Contraseña", type="password")
+    es_admin = (password_admin == "admin123")
+
 # --- ENCABEZADO PERSONALIZADO ---
 col1, col2 = st.columns([1, 4])
 with col1:
@@ -39,7 +46,6 @@ with col1:
     except: 
         pass
 with col2:
-    # Título con ajuste de altura para alinearse al logo
     st.markdown("<h1 style='margin-top: 25px;'>Control de Flotilla SEV</h1>", unsafe_allow_html=True)
 
 st.divider()
@@ -48,9 +54,18 @@ st.divider()
 conn = st.connection("gsheets", type=GSheetsConnection)
 zona_cdmx = pytz.timezone('America/Mexico_City')
 
-tab_inicio, tab_fin = st.tabs(["🟢 Iniciar Turno", "🔴 Finalizar Turno"])
+# --- CONFIGURACIÓN DINÁMICA DE PESTAÑAS ---
+nombres_tabs = ["🟢 Iniciar Turno", "🔴 Finalizar Turno"]
+if es_admin:
+    nombres_tabs.append("📊 Dashboard Admin")
 
-# --- PESTAÑA 1: INICIO DE TURNO (Con Candado Anti-Duplicados) ---
+tabs = st.tabs(nombres_tabs)
+tab_inicio = tabs[0]
+tab_fin = tabs[1]
+if es_admin:
+    tab_dash = tabs[2]
+
+# --- PESTAÑA 1: INICIO DE TURNO ---
 with tab_inicio:
     st.header("Registro de Inicio")
     st.write("Completa esta sección al comenzar tu turno.")
@@ -62,7 +77,7 @@ with tab_inicio:
         if nombre_inicio and km_inicio is not None:
             df_actualizado = conn.read(worksheet="Hoja 1", ttl=0)
             
-            # --- BLINDAJE DE COLUMNAS (Corrección del error TypeError) ---
+            # --- BLINDAJE DE COLUMNAS ---
             for col in ['Carga del Día', 'Lugar de Carga', 'Comentarios', 'Comprobante']:
                 if col not in df_actualizado.columns:
                     df_actualizado[col] = ""
@@ -89,7 +104,7 @@ with tab_inicio:
         else:
             st.warning("⚠️ Ingresa nombre y kilometraje.")
 
-# --- PESTAÑA 2: FIN DE TURNO (Con Resumen de Desempeño) ---
+# --- PESTAÑA 2: FIN DE TURNO ---
 with tab_fin:
     st.header("Registro Final")
     nombre_fin = st.text_input("Ingresa tu Nombre", key="nom_fin")
@@ -103,7 +118,7 @@ with tab_fin:
         if nombre_fin and km_fin is not None:
             df_actualizado = conn.read(worksheet="Hoja 1", ttl=0)
             
-            # --- BLINDAJE DE COLUMNAS (Corrección del error TypeError) ---
+            # --- BLINDAJE DE COLUMNAS ---
             for col in ['Carga del Día', 'Lugar de Carga', 'Comentarios', 'Comprobante']:
                 if col not in df_actualizado.columns:
                     df_actualizado[col] = ""
@@ -131,7 +146,7 @@ with tab_fin:
                     link_final = " ".join(links_tickets) if links_tickets else "No subido"
                     total_recorrido = float(km_fin - km_ini)
 
-                    # Guardado en Excel (Valores numéricos limpios)
+                    # Guardado en Excel
                     df_actualizado.at[idx, 'Kilometraje Final'] = float(km_fin)
                     df_actualizado.at[idx, 'Total Recorrido'] = total_recorrido
                     df_actualizado.at[idx, 'Carga del Día'] = total_dinero
@@ -145,10 +160,68 @@ with tab_fin:
                     # --- RESUMEN VISUAL PARA EL CONDUCTOR ---
                     st.success(f"🏁¡Turno finalizado con éxito, {nombre_fin}!")
                     st.success(f"🚖 Km Recorridos {total_recorrido} km | 🔋 Carga ${total_dinero}")
-                    st.balloons() # Animación de celebración opcional
+                    st.balloons() 
                 else:
                     st.error(f"❌ El kilometraje final ({km_fin}) no puede ser menor al inicial ({km_ini}).")
             else:
                 st.error("❌ No se encontró un turno activo. Verifica tu nombre.")
         else:
             st.warning("⚠️ Completa nombre y kilometraje final.")
+
+# --- PESTAÑA 3: DASHBOARD ADMINISTRATIVO OCULTO ---
+if es_admin:
+    with tab_dash:
+        st.header("Análisis Semanal de Flotilla")
+        
+        # Leemos el Excel para graficar
+        df_dash = conn.read(worksheet="Hoja 1", ttl=0)
+
+        if not df_dash.empty:
+            # Limpieza y conversión de fechas
+            df_dash['Fecha'] = pd.to_datetime(df_dash['Fecha'], errors='coerce')
+            df_dash = df_dash.dropna(subset=['Fecha']) # Quitamos errores o cortes
+            
+            if not df_dash.empty:
+                # Crear columna de Semana
+                df_dash['Semana'] = df_dash['Fecha'].dt.strftime('%Y - Sem %U')
+                
+                # Asegurar que sean números
+                df_dash['Total Recorrido'] = pd.to_numeric(df_dash['Total Recorrido'], errors='coerce').fillna(0)
+                df_dash['Carga del Día'] = pd.to_numeric(df_dash['Carga del Día'], errors='coerce').fillna(0)
+
+                # Selector interactivo de semana
+                lista_semanas = sorted(df_dash['Semana'].unique(), reverse=True)
+                semana_seleccionada = st.selectbox("📅 Selecciona la Semana a consultar:", ["Todas"] + lista_semanas)
+
+                # Filtrar base de datos
+                if semana_seleccionada != "Todas":
+                    df_filtrado = df_dash[df_dash['Semana'] == semana_seleccionada]
+                else:
+                    df_filtrado = df_dash
+
+                # Agrupar datos por conductor
+                resumen = df_filtrado.groupby('Nombre').agg({
+                    'Total Recorrido': 'sum',
+                    'Carga del Día': 'sum'
+                }).reset_index()
+
+                # Mostrar Métricas Totales
+                m1, m2 = st.columns(2)
+                m1.metric(f"KM Totales ({semana_seleccionada})", f"{df_filtrado['Total Recorrido'].sum():,.1f} km")
+                m2.metric(f"Gasto Total ({semana_seleccionada})", f"${df_filtrado['Carga del Día'].sum():,.2f}")
+
+                st.divider()
+
+                # Mostrar Gráficas de Barras
+                col_g1, col_g2 = st.columns(2)
+                with col_g1:
+                    st.subheader("Distancia por Conductor")
+                    st.bar_chart(data=resumen, x='Nombre', y='Total Recorrido')
+                with col_g2:
+                    st.subheader("Gasto de Carga")
+                    st.bar_chart(data=resumen, x='Nombre', y='Carga del Día')
+            else:
+                st.info("No hay fechas válidas para analizar aún.")
+        else:
+            st.info("Aún no hay datos para mostrar en el dashboard.")
+     
