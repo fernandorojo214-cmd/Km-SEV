@@ -29,14 +29,6 @@ def calcular_total_carga(texto):
     if not numeros: return 0.0
     return sum(float(n) for n in numeros)
 
-# --- SEGURIDAD: ACCESO ADMIN (BARRA LATERAL) ---
-with st.sidebar:
-    st.title("⚙️ Configuración")
-    st.write("Solo para administradores.")
-    # Contraseña por defecto: admin123 (Cámbiala por la tuya)
-    password_admin = st.text_input("Contraseña", type="password")
-    es_admin = (password_admin == "admin123")
-
 # --- ENCABEZADO PERSONALIZADO ---
 col1, col2 = st.columns([1, 4])
 with col1:
@@ -49,6 +41,15 @@ with col2:
     st.markdown("<h1 style='margin-top: 25px;'>Control de Flotilla SEV</h1>", unsafe_allow_html=True)
 
 st.divider()
+
+# --- SEGURIDAD: ACCESO ADMIN (EN PANTALLA PRINCIPAL) ---
+# Usamos un expander para que no estorbe la vista de los conductores
+with st.expander("🔐 Acceso Administrativo"):
+    st.write("Solo para administradores.")
+    password_admin = st.text_input("Contraseña", type="password", key="clave_admin")
+    es_admin = (password_admin == "admin123") # Contraseña por defecto
+
+st.write("") # Un pequeño espacio en blanco
 
 # Conexión a base de datos
 conn = st.connection("gsheets", type=GSheetsConnection)
@@ -224,4 +225,3 @@ if es_admin:
                 st.info("No hay fechas válidas para analizar aún.")
         else:
             st.info("Aún no hay datos para mostrar en el dashboard.")
-     
