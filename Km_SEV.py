@@ -42,12 +42,18 @@ with col2:
 
 st.divider()
 
-# --- SEGURIDAD: ACCESO ADMIN (EN PANTALLA PRINCIPAL) ---
-# Usamos un expander para que no estorbe la vista de los conductores
-with st.expander("🔐 Acceso Administrativo"):
-    st.write("Solo para administradores.")
-    password_admin = st.text_input("Contraseña", type="password", key="clave_admin")
-    es_admin = (password_admin == "admin123") # Contraseña por defecto
+# --- SEGURIDAD: PUERTA TRASERA INVISIBLE (URL SECRETA) ---
+es_admin = False
+
+# Verificamos si el enlace de internet contiene el código secreto "?jefe=true"
+if "jefe" in st.query_params and st.query_params["jefe"] == "true":
+    with st.sidebar:
+        st.title("🔐 Zona Segura")
+        st.write("Panel de Control SEV")
+        password_admin = st.text_input("Ingresa tu PIN", type="password")
+        if password_admin == "admin123":
+            es_admin = True
+            st.success("Acceso concedido")
 
 st.write("") # Un pequeño espacio en blanco
 
