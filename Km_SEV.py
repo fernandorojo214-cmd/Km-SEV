@@ -11,7 +11,7 @@ from streamlit_gsheets import GSheetsConnection
 # --- CONFIGURACIÓN DE CLOUDINARY ---
 # Reemplaza con tus datos de Cloudinary
 cloudinary.config(
-  cloud_name = "SEV",
+  cloud_name = "dlycnr93r",
   api_key = "594752421538947",
   api_secret = "SrANNdM7fAUnpV6ZW3eHbCqL1YQ",
   secure = True
