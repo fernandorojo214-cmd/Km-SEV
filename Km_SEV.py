@@ -3,41 +3,63 @@ import pandas as pd
 from datetime import datetime
 import pytz
 import os
-import cloudinary
-import cloudinary.uploader
 import re
+import io
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseUpload
+from google.oauth2 import service_account
 from streamlit_gsheets import GSheetsConnection
 
-# --- CONFIGURACIÓN DE CLOUDINARY ---
-# Reemplaza con tus datos de Cloudinary
-cloudinary.config(
-  cloud_name = "SEV",
-  api_key = "594752421538947",
-  api_secret = "SrANNdM7fAUnpV6ZW3eHbCqL1YQ",
-  secure = True
-)
+# --- CONFIGURACIÓN DE GOOGLE DRIVE ---
+# Reemplaza esto con el ID de la carpeta que creaste en tu Drive
+FOLDER_ID_DRIVE = "https://drive.google.com/drive/folders/1mmOkYJefRF-X78YuOPiw9FbWMqphUJKH"
 
 st.set_page_config(page_title="Control de Flotilla", layout="centered")
 
-# --- FUNCIONES DE APOYO ---
-def subir_archivo_a_nube(file_obj):
+# --- FUNCIONES DE APOYO (AHORA CON GOOGLE DRIVE) ---
+def obtener_servicio_drive():
     try:
-        # Detectamos si el conductor subió un PDF
-        es_pdf = file_obj.name.lower().endswith('.pdf')
-        
-        # Si es PDF, lo subimos en modo 'raw' (documento). Si es foto, en modo 'auto'
-        tipo_recurso = "raw" if es_pdf else "auto"
-        
-        resultado = cloudinary.uploader.upload(
-            file_obj, 
-            resource_type=tipo_recurso,
-            use_filename=True,     # Obliga a mantener el nombre original
-            unique_filename=True   # Le agrega unos números al final para que no se sobreescriba
+        # Usa las credenciales que ya tienes para Google Sheets
+        creds_dict = st.secrets["connections"]["gsheets"]
+        # Solicitamos permiso explícito para usar Google Drive
+        creds = service_account.Credentials.from_service_account_info(
+            creds_dict,
+            scopes=['https://www.googleapis.com/auth/drive']
         )
-        return resultado['secure_url']
+        return build('drive', 'v3', credentials=creds)
     except Exception as e:
-        st.error(f"Error al subir archivo: {e}")
+        st.error(f"Error de conexión con Drive: {e}")
         return None
+
+def subir_archivo_a_nube(file_obj):
+    servicio = obtener_servicio_drive()
+    if not servicio: return None
+    
+    try:
+        file_metadata = {
+            'name': file_obj.name,
+            'parents': [FOLDER_ID_DRIVE]
+        }
+        
+        # Leemos el archivo desde la memoria de Streamlit
+        media = MediaIoBaseUpload(io.BytesIO(file_obj.getvalue()), mimetype=file_obj.type, resumable=True)
+        
+        archivo_subido = servicio.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields='id, webViewLink'
+        ).execute()
+        
+        # Retornamos el link directo de Google Drive
+        return archivo_subido.get('webViewLink')
+    except Exception as e:
+        st.error(f"Error al subir archivo a Drive: {e}")
+        return None
+
+def calcular_total_carga(texto):
+    numeros = re.findall(r"[-+]?\d*\.\d+|\d+", texto)
+    if not numeros: return 0.0
+    return sum(float(n) for n in numeros)
 
 # --- ENCABEZADO PERSONALIZADO ---
 col1, col2 = st.columns([1, 4])
@@ -112,7 +134,7 @@ with tab_inicio:
         else:
             st.warning("⚠️ Ingresa nombre y kilometraje.")
 
-# --- PESTAÑA 2: FIN DE TURNO (Soporte para PDF) ---
+# --- PESTAÑA 2: FIN DE TURNO ---
 with tab_fin:
     st.header("Registro Final")
     nombre_fin = st.text_input("Ingresa tu Nombre", key="nom_fin")
@@ -121,7 +143,7 @@ with tab_fin:
     lugar_carga = st.text_input("Lugar de Carga", key="lugar_carga")
     txt_comentarios = st.text_area("Comentarios (Opcional)", key="coment")
     
-    # AJUSTE: Ahora acepta PDF además de imágenes
+    # Acepta PDF e imágenes
     archivos_tickets = st.file_uploader("Subir fotos o PDFs de los Tickets", type=["png", "jpg", "jpeg", "pdf"], accept_multiple_files=True)
     
     if st.button("Registrar Fin de Turno", type="primary"):
@@ -146,7 +168,7 @@ with tab_fin:
                     links_archivos = []
                     
                     if archivos_tickets:
-                        with st.spinner("Subiendo comprobantes (Fotos/PDFs)..."):
+                        with st.spinner("Subiendo a Google Drive..."):
                             for archivo in archivos_tickets:
                                 url = subir_archivo_a_nube(archivo)
                                 if url: links_archivos.append(url)
@@ -182,7 +204,6 @@ if es_admin:
         df_dash = conn.read(worksheet="Hoja 1", ttl=0)
 
         if not df_dash.empty:
-            # 1. Limpieza de datos y Fechas
             df_dash['Fecha'] = pd.to_datetime(df_dash['Fecha'], errors='coerce')
             df_dash = df_dash.dropna(subset=['Fecha'])
             
@@ -191,27 +212,19 @@ if es_admin:
                 df_dash['Total Recorrido'] = pd.to_numeric(df_dash['Total Recorrido'], errors='coerce').fillna(0)
                 df_dash['Carga del Día'] = pd.to_numeric(df_dash['Carga del Día'], errors='coerce').fillna(0)
 
-                # Selector de semana
                 lista_semanas = sorted(df_dash['Semana'].unique(), reverse=True)
                 semana_sel = st.selectbox("📅 Selecciona la Semana:", ["Todas"] + lista_semanas)
 
-                # Filtrado
                 df_f = df_dash if semana_sel == "Todas" else df_dash[df_dash['Semana'] == semana_sel]
 
-                # --- PROCESAMIENTO DE LUGARES DE CARGA ---
-                # Limpiamos los nombres (quitar espacios y poner la primera letra en mayúscula)
                 df_f['Lugar de Carga'] = df_f['Lugar de Carga'].astype(str).str.strip().str.title()
-                # Quitamos los registros que digan "N/A" o estén vacíos para que no ensucien la gráfica
                 df_lugares = df_f[~df_f['Lugar de Carga'].isin(["N/A", "None", "", "Nan"])]
                 
-                # Contamos cuántas veces aparece cada lugar
                 conteo_lugares = df_lugares['Lugar de Carga'].value_counts().reset_index()
                 conteo_lugares.columns = ['Lugar', 'Número de Cargas']
 
-                # Agrupación de Gastos por Conductor (para la segunda gráfica)
                 resumen_gastos = df_f.groupby('Nombre')['Carga del Día'].sum().reset_index()
 
-                # --- MÉTRICAS SUPERIORES ---
                 m1, m2, m3 = st.columns(3)
                 m1.metric("KM Totales", f"{df_f['Total Recorrido'].sum():,.1f} km")
                 m2.metric("Gasto Total", f"${df_f['Carga del Día'].sum():,.2f}")
@@ -219,13 +232,11 @@ if es_admin:
 
                 st.divider()
 
-                # --- NUEVAS GRÁFICAS ---
                 col_g1, col_g2 = st.columns(2)
                 
                 with col_g1:
                     st.subheader("📍 Lugares más Frecuentados")
                     if not conteo_lugares.empty:
-                        # Mostramos qué estaciones se usan más
                         st.bar_chart(data=conteo_lugares, x='Lugar', y='Número de Cargas')
                     else:
                         st.write("No hay datos de lugares en este periodo.")
@@ -234,7 +245,6 @@ if es_admin:
                     st.subheader("💰 Gasto por Conductor")
                     st.bar_chart(data=resumen_gastos, x='Nombre', y='Carga del Día')
 
-                # Tabla de inspección
                 with st.expander("Ver detalle de ubicaciones"):
                     st.dataframe(conteo_lugares, use_container_width=True)
             else:
