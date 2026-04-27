@@ -11,7 +11,7 @@ from streamlit_gsheets import GSheetsConnection
 # --- CONFIGURACIÓN DE CLOUDINARY ---
 # Reemplaza con tus datos de Cloudinary
 cloudinary.config(
-  cloud_name = "dlycnr93r",
+  cloud_name = "SEV",
   api_key = "594752421538947",
   api_secret = "SrANNdM7fAUnpV6ZW3eHbCqL1YQ",
   secure = True
@@ -22,17 +22,22 @@ st.set_page_config(page_title="Control de Flotilla", layout="centered")
 # --- FUNCIONES DE APOYO ---
 def subir_archivo_a_nube(file_obj):
     try:
-        # 'resource_type="auto"' permite que Cloudinary acepte tanto fotos como PDFs
-        resultado = cloudinary.uploader.upload(file_obj, resource_type="auto")
+        # Detectamos si el conductor subió un PDF
+        es_pdf = file_obj.name.lower().endswith('.pdf')
+        
+        # Si es PDF, lo subimos en modo 'raw' (documento). Si es foto, en modo 'auto'
+        tipo_recurso = "raw" if es_pdf else "auto"
+        
+        resultado = cloudinary.uploader.upload(
+            file_obj, 
+            resource_type=tipo_recurso,
+            use_filename=True,     # Obliga a mantener el nombre original
+            unique_filename=True   # Le agrega unos números al final para que no se sobreescriba
+        )
         return resultado['secure_url']
     except Exception as e:
         st.error(f"Error al subir archivo: {e}")
         return None
-
-def calcular_total_carga(texto):
-    numeros = re.findall(r"[-+]?\d*\.\d+|\d+", texto)
-    if not numeros: return 0.0
-    return sum(float(n) for n in numeros)
 
 # --- ENCABEZADO PERSONALIZADO ---
 col1, col2 = st.columns([1, 4])
