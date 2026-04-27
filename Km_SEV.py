@@ -4,57 +4,46 @@ from datetime import datetime
 import pytz
 import os
 import re
-import io
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
-from google.oauth2 import service_account
+import cloudinary
+import cloudinary.uploader
+import cloudinary.api
 from streamlit_gsheets import GSheetsConnection
 
-# --- CONFIGURACIÓN DE GOOGLE DRIVE ---
-# Reemplaza esto con el ID de la carpeta que creaste en tu Drive
-FOLDER_ID_DRIVE = "1mmOkYJefRF-X78YuOPiw9FbWMqphUJKH"
+# --- CONFIGURACIÓN DE CLOUDINARY ---
+# Pon tus datos exactos de Cloudinary aquí
+cloudinary.config(
+    cloud_name = "TU_CLOUD_NAME",
+    api_key = "TU_API_KEY",
+    api_secret = "TU_API_SECRET",
+    secure = True
+)
 
 st.set_page_config(page_title="Control de Flotilla", layout="centered")
 
-# --- FUNCIONES DE APOYO (AHORA CON GOOGLE DRIVE) ---
-def obtener_servicio_drive():
+# --- FUNCIONES DE APOYO ---
+def subir_archivo_a_nube(file_obj):
     try:
-        # Usa las credenciales que ya tienes para Google Sheets
-        creds_dict = st.secrets["connections"]["gsheets"]
-        # Solicitamos permiso explícito para usar Google Drive
-        creds = service_account.Credentials.from_service_account_info(
-            creds_dict,
-            scopes=['https://www.googleapis.com/auth/drive']
+        es_pdf = file_obj.name.lower().endswith('.pdf')
+        # Si es PDF es 'raw', si es foto es 'auto'
+        tipo_recurso = "raw" if es_pdf else "auto"
+        
+        resultado = cloudinary.uploader.upload(
+            file_obj, 
+            resource_type=tipo_recurso,
+            use_filename=True,     
+            unique_filename=True   
         )
-        return build('drive', 'v3', credentials=creds)
+        return resultado['secure_url']
     except Exception as e:
-        st.error(f"Error de conexión con Drive: {e}")
+        st.error(f"Error al subir archivo: {e}")
         return None
 
-def subir_archivo_a_nube(file_obj):
-    servicio = obtener_servicio_drive()
-    if not servicio: return None
-    
-    try:
-        file_metadata = {
-            'name': file_obj.name,
-            'parents': [FOLDER_ID_DRIVE]
-        }
-        
-        # Leemos el archivo desde la memoria de Streamlit
-        media = MediaIoBaseUpload(io.BytesIO(file_obj.getvalue()), mimetype=file_obj.type, resumable=True)
-        
-        archivo_subido = servicio.files().create(
-            body=file_metadata,
-            media_body=media,
-            fields='id, webViewLink'
-        ).execute()
-        
-        # Retornamos el link directo de Google Drive
-        return archivo_subido.get('webViewLink')
-    except Exception as e:
-        st.error(f"Error al subir archivo a Drive: {e}")
-        return None
+def extraer_datos_cloudinary(url):
+    """Función interna para saber qué archivo borrar exactamente"""
+    res_type = "raw" if "/raw/" in url else "image"
+    archivo = url.split('/')[-1]
+    public_id = archivo if res_type == "raw" else archivo.rsplit('.', 1)[0]
+    return public_id, res_type
 
 def calcular_total_carga(texto):
     numeros = re.findall(r"[-+]?\d*\.\d+|\d+", texto)
@@ -74,7 +63,7 @@ with col2:
 
 st.divider()
 
-# --- SEGURIDAD: PUERTA TRASERA INVISIBLE (URL SECRETA) ---
+# --- SEGURIDAD: PUERTA TRASERA INVISIBLE ---
 es_admin = False
 if "jefe" in st.query_params and st.query_params["jefe"] == "true":
     with st.sidebar:
@@ -110,8 +99,7 @@ with tab_inicio:
             df_actualizado = conn.read(worksheet="Hoja 1", ttl=0)
             
             for col in ['Carga del Día', 'Lugar de Carga', 'Comentarios', 'Comprobante']:
-                if col not in df_actualizado.columns:
-                    df_actualizado[col] = ""
+                if col not in df_actualizado.columns: df_actualizado[col] = ""
                 df_actualizado[col] = df_actualizado[col].astype("object")
             
             nombre_buscado_ini = nombre_inicio.strip().lower()
@@ -143,7 +131,6 @@ with tab_fin:
     lugar_carga = st.text_input("Lugar de Carga", key="lugar_carga")
     txt_comentarios = st.text_area("Comentarios (Opcional)", key="coment")
     
-    # Acepta PDF e imágenes
     archivos_tickets = st.file_uploader("Subir fotos o PDFs de los Tickets", type=["png", "jpg", "jpeg", "pdf"], accept_multiple_files=True)
     
     if st.button("Registrar Fin de Turno", type="primary"):
@@ -151,8 +138,7 @@ with tab_fin:
             df_actualizado = conn.read(worksheet="Hoja 1", ttl=0)
             
             for col in ['Carga del Día', 'Lugar de Carga', 'Comentarios', 'Comprobante']:
-                if col not in df_actualizado.columns:
-                    df_actualizado[col] = ""
+                if col not in df_actualizado.columns: df_actualizado[col] = ""
                 df_actualizado[col] = df_actualizado[col].astype("object")
 
             nombre_buscado = nombre_fin.strip().lower()
@@ -168,7 +154,7 @@ with tab_fin:
                     links_archivos = []
                     
                     if archivos_tickets:
-                        with st.spinner("Subiendo a Google Drive..."):
+                        with st.spinner("Subiendo archivos a la nube..."):
                             for archivo in archivos_tickets:
                                 url = subir_archivo_a_nube(archivo)
                                 if url: links_archivos.append(url)
@@ -222,7 +208,6 @@ if es_admin:
                 
                 conteo_lugares = df_lugares['Lugar de Carga'].value_counts().reset_index()
                 conteo_lugares.columns = ['Lugar', 'Número de Cargas']
-
                 resumen_gastos = df_f.groupby('Nombre')['Carga del Día'].sum().reset_index()
 
                 m1, m2, m3 = st.columns(3)
@@ -233,21 +218,34 @@ if es_admin:
                 st.divider()
 
                 col_g1, col_g2 = st.columns(2)
-                
                 with col_g1:
-                    st.subheader("📍 Lugares más Frecuentados")
-                    if not conteo_lugares.empty:
-                        st.bar_chart(data=conteo_lugares, x='Lugar', y='Número de Cargas')
-                    else:
-                        st.write("No hay datos de lugares en este periodo.")
-
+                    st.subheader("📍 Lugares Frecuentados")
+                    if not conteo_lugares.empty: st.bar_chart(data=conteo_lugares, x='Lugar', y='Número de Cargas')
                 with col_g2:
                     st.subheader("💰 Gasto por Conductor")
                     st.bar_chart(data=resumen_gastos, x='Nombre', y='Carga del Día')
 
-                with st.expander("Ver detalle de ubicaciones"):
-                    st.dataframe(conteo_lugares, use_container_width=True)
+        # --- NUEVA HERRAMIENTA: GESTOR DE ESPACIO ---
+        st.divider()
+        st.subheader("🧹 Gestor de Archivos (Liberar Espacio)")
+        st.write("Si necesitas borrar un ticket de la nube, copia el enlace del Excel y pégalo aquí.")
+        
+        link_a_borrar = st.text_input("Enlace del Comprobante (URL):", placeholder="https://res.cloudinary.com/...")
+        
+        if st.button("🗑️ Eliminar permanentemente de la nube", type="primary"):
+            if "cloudinary.com" in link_a_borrar:
+                with st.spinner("Borrando archivo..."):
+                    try:
+                        # Extraemos el ID exacto que pide Cloudinary
+                        public_id, res_type = extraer_datos_cloudinary(link_a_borrar)
+                        # Mandamos la orden de destrucción
+                        respuesta = cloudinary.uploader.destroy(public_id, resource_type=res_type)
+                        
+                        if respuesta.get('result') == 'ok':
+                            st.success("✅ Archivo eliminado correctamente. ¡Espacio liberado!")
+                        else:
+                            st.warning("⚠️ No se encontró el archivo. Es probable que ya haya sido borrado.")
+                    except Exception as e:
+                        st.error(f"Error técnico al intentar borrar: {e}")
             else:
-                st.info("No hay fechas válidas para analizar.")
-        else:
-            st.info("Aún no hay datos en el sistema.")
+                st.error("❌ Por favor ingresa un enlace válido de Cloudinary.")
