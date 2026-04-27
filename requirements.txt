@@ -4,3 +4,4 @@ st-gsheets-connection
 pytz
 google-api-python-client
 google-auth
+cloudinary
