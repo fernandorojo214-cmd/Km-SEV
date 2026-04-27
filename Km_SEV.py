@@ -12,7 +12,7 @@ from streamlit_gsheets import GSheetsConnection
 
 # --- CONFIGURACIÓN DE GOOGLE DRIVE ---
 # Reemplaza esto con el ID de la carpeta que creaste en tu Drive
-FOLDER_ID_DRIVE = "FOLDER_ID_DRIVE = "1mmOkYJefRF-X78YuOPiw9FbWMqphUJKH""
+FOLDER_ID_DRIVE = "1mmOkYJefRF-X78YuOPiw9FbWMqphUJKH"
 
 st.set_page_config(page_title="Control de Flotilla", layout="centered")
 
