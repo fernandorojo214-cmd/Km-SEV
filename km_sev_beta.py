@@ -62,27 +62,23 @@ def calcular_total_carga(texto):
     return sum(float(n) for n in numeros)
 
 # --- PANTALLAS DE AUTENTICACIÓN (LOGIN) ---
-
 if not st.session_state['logged_in']:
     
-    # ⚙️ VARIABLES PARA AJUSTAR EL LOGO Y TÍTULO
-    ANCHO_LOGO = 120               # Cambia este número para hacer el logo más grande o pequeño.
-    ALTURA_TITULO = "15px"         # Aumenta (ej. "30px") para bajar el título, redúcelo (ej. "0px") para subirlo.
-    ESPACIO_COLUMNAS = [1, 3]      # El [1] es el espacio del logo, el [3] es el del texto. Cámbialo a [1, 2] si el logo es muy grande.
-
-    # Encabezado para la zona de Login
-    col1, col2, col3 = st.columns([1, 2, 1]) # Esto centra todo el formulario en la pantalla
+    # Encabezado súper compacto de lado a lado
+    col1, col2, col3 = st.columns([1, 6, 1]) # Maximizamos el espacio del contenedor central
     with col2:
         
-        # Sub-columnas para poner el logo a la izquierda y el título a la derecha
-        c_logo, c_titulo = st.columns(ESPACIO_COLUMNAS)
+        # Proporción muy ajustada: 1 parte para el logo, 4 partes para el texto
+        c_logo, c_titulo = st.columns([1, 4])
         
         with c_logo:
             if os.path.exists("logo.png"):
-                st.image("logo.png", width=ANCHO_LOGO)
+                # Reducimos el logo a 55px para que no empuje al texto en el celular
+                st.image("logo.png", width=55) 
                 
         with c_titulo:
-            st.markdown(f"<h2 style='margin-top: {ALTURA_TITULO};'>SOLAR FLEET</h2>", unsafe_allow_html=True)
+            # Usamos un tamaño de letra un poco más chico (h3 en lugar de h2) para el teléfono
+            st.markdown("<h3 style='margin-top: 12px; margin-left: -10px; white-space: nowrap;'>SOLAR FLEET</h3>", unsafe_allow_html=True)
             
         st.divider()
 
