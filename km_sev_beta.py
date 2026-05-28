@@ -62,10 +62,7 @@ def calcular_total_carga(texto):
     return sum(float(n) for n in numeros)
 
 # --- PANTALLAS DE AUTENTICACIÓN (LOGIN) ---
-if not st.session_state['logged_in']:
-    
-    # Encabezado para la zona de Login
-# --- PANTALLAS DE AUTENTICACIÓN (LOGIN) ---
+
 if not st.session_state['logged_in']:
     
     # ⚙️ VARIABLES PARA AJUSTAR EL LOGO Y TÍTULO
@@ -124,7 +121,7 @@ if not st.session_state['logged_in']:
                     st.error("⚠️ La contraseña debe tener al menos 4 caracteres.")
                 else:
                     # Lógica para crear el usuario (Primera letra del nombre + apellido sin espacios)
-                    base_usr = f"{nombre[0]}{apellido[0]}".replace(" ", "")
+                    base_usr = f"{nombre[0]}{apellido}".replace(" ", "")
                     nuevo_usr = base_usr
                     contador = 1
                     
