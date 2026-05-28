@@ -66,7 +66,7 @@ if not st.session_state['logged_in']:
     
     # ⚙️ VARIABLES PARA AJUSTAR EL LOGO Y TÍTULO (OPCIÓN VERTICAL)
     ANCHO_LOGO = 120              # Aumenta o disminuye los píxeles para cambiar el tamaño del logo.
-    ESPACIO_LADOS = -5             # Mantiene los lados empujando el logo al centro.
+    ESPACIO_LADOS = 5             # Mantiene los lados empujando el logo al centro.
     ESPACIO_CENTRO = 2            # Si el logo se ve movido a la izquierda, baja este número (ej. 1.5). Si se ve a la derecha, súbelo (ej. 2.5).
     SEPARACION_TITULO = "-5px"    # Acercar o alejar el título del logo (usa números negativos para acercar, positivos para alejar).
 
