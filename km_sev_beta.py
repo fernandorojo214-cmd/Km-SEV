@@ -64,19 +64,25 @@ def calcular_total_carga(texto):
 # --- PANTALLAS DE AUTENTICACIÓN (LOGIN) ---
 if not st.session_state['logged_in']:
     
-    # Encabezado para la zona de Login (Optimizado para Celular)
-    col1, col2, col3 = st.columns([1, 5, 1]) # Da más espacio al centro en pantallas chicas
+    # ⚙️ VARIABLES PARA AJUSTAR EL LOGO Y TÍTULO (OPCIÓN VERTICAL)
+    ANCHO_LOGO = 120              # Aumenta o disminuye los píxeles para cambiar el tamaño del logo.
+    ESPACIO_LADOS = 1             # Mantiene los lados empujando el logo al centro.
+    ESPACIO_CENTRO = 2            # Si el logo se ve movido a la izquierda, baja este número (ej. 1.5). Si se ve a la derecha, súbelo (ej. 2.5).
+    SEPARACION_TITULO = "-5px"    # Acercar o alejar el título del logo (usa números negativos para acercar, positivos para alejar).
+
+    # Contenedor principal para pantallas chicas
+    col1, col2, col3 = st.columns([1, 5, 1]) 
     with col2:
-        st.write("")
+        st.write("") # Pequeño espacio superior
         
-        # Sub-columnas exclusivas para centrar el logo arriba
-        c_izq, c_centro, c_der = st.columns([1, 2, 1])
+        # Sistema de centrado milimétrico para el logo
+        c_izq, c_centro, c_der = st.columns([ESPACIO_LADOS, ESPACIO_CENTRO, ESPACIO_LADOS])
         with c_centro:
             if os.path.exists("logo.png"):
-                st.image("logo.png", width=110) # Tamaño ideal y compacto para teléfono
+                st.image("logo.png", width=ANCHO_LOGO)
         
         # Título centrado abajo del logo
-        st.markdown("<h2 style='text-align: center; margin-top: -5px; margin-bottom: 10px;'>SOLAR FLEET</h2>", unsafe_allow_html=True)
+        st.markdown(f"<h2 style='text-align: center; margin-top: {SEPARACION_TITULO}; margin-bottom: 10px;'>SOLAR FLEET</h2>", unsafe_allow_html=True)
         st.divider()
 
         # 1. PANTALLA DE LOGIN NORMAL
