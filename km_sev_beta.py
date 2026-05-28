@@ -111,7 +111,7 @@ if not st.session_state['logged_in']:
                     st.error("⚠️ La contraseña debe tener al menos 4 caracteres.")
                 else:
                     # Lógica para crear el usuario (Primera letra del nombre + apellido sin espacios)
-                    base_usr = f"{nombre[0]}{apellido}".replace(" ", "")
+                    base_usr = f"{nombre[0]}{apellido[0]}".replace(" ", "")
                     nuevo_usr = base_usr
                     contador = 1
                     
@@ -151,7 +151,7 @@ else:
     with c2:
         st.markdown("<h2 style='margin-top: 15px;'>Control SEV</h2>", unsafe_allow_html=True)
     with c3:
-        st.write(f"👤 **{st.session_state['current_user']}**")
+        st.write(f"👤 **{st.session_state['nombre' 'apellido']}**")
         st.button("Cerrar Sesión", on_click=cerrar_sesion)
 
     st.divider()
