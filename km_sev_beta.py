@@ -65,15 +65,28 @@ def calcular_total_carga(texto):
 if not st.session_state['logged_in']:
     
     # Encabezado para la zona de Login
-    col1, col2, col3 = st.columns([1, 2, 1])
+# --- PANTALLAS DE AUTENTICACIÓN (LOGIN) ---
+if not st.session_state['logged_in']:
+    
+    # ⚙️ VARIABLES PARA AJUSTAR EL LOGO Y TÍTULO
+    ANCHO_LOGO = 120               # Cambia este número para hacer el logo más grande o pequeño.
+    ALTURA_TITULO = "15px"         # Aumenta (ej. "30px") para bajar el título, redúcelo (ej. "0px") para subirlo.
+    ESPACIO_COLUMNAS = [1, 3]      # El [1] es el espacio del logo, el [3] es el del texto. Cámbialo a [1, 2] si el logo es muy grande.
+
+    # Encabezado para la zona de Login
+    col1, col2, col3 = st.columns([1, 2, 1]) # Esto centra todo el formulario en la pantalla
     with col2:
-        # Sub-columnas para centrar el logo perfectamente
-        c_logo1, c_logo2, c_logo3 = st.columns([1, 2, 1])
-        with c_logo2:
+        
+        # Sub-columnas para poner el logo a la izquierda y el título a la derecha
+        c_logo, c_titulo = st.columns(ESPACIO_COLUMNAS)
+        
+        with c_logo:
             if os.path.exists("logo.png"):
-                st.image("logo.png", use_container_width=True)
+                st.image("logo.png", width=ANCHO_LOGO)
                 
-        st.markdown("<h2 style='text-align: center;'>SOLAR FLEET</h2>", unsafe_allow_html=True)
+        with c_titulo:
+            st.markdown(f"<h2 style='margin-top: {ALTURA_TITULO};'>SOLAR FLEET</h2>", unsafe_allow_html=True)
+            
         st.divider()
 
         # 1. PANTALLA DE LOGIN NORMAL
@@ -151,7 +164,7 @@ else:
     with c2:
         st.markdown("<h2 style='margin-top: 15px;'>Control SEV</h2>", unsafe_allow_html=True)
     with c3:
-        st.write(f"👤 **{st.session_state['nombre' 'apellido']}**")
+        st.write(f"👤 **{st.session_state['current_user']}**")
         st.button("Cerrar Sesión", on_click=cerrar_sesion)
 
     st.divider()
