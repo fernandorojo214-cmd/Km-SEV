@@ -64,48 +64,39 @@ def calcular_total_carga(texto):
 # --- PANTALLAS DE AUTENTICACIÓN (LOGIN) ---
 if not st.session_state['logged_in']:
     
-    st.write("") # Pequeño espacio superior
+    st.write("") 
     
     # ⚙️ CONTROL MAESTRO DE TAMAÑO Y CENTRADO
-    # Cambia estos 3 números para ajustar el logo:
-    # [1, 1, 1] -> Logo mediano (Recomendado para celular)
-    # [1, 2, 1] -> Logo grande 
-    # [2, 1, 2] -> Logo pequeño
     PROPORCION_COLUMNAS = [1, 1.2, 1]  
 
-    # Creamos las 3 columnas principales
     c_izq, c_centro, c_der = st.columns(PROPORCION_COLUMNAS)
     
     with c_centro:
         if os.path.exists("logo.png"):
-            # 'use_container_width=True' es el truco mágico. 
-            # Obliga al logo a estar en el centro absoluto rellenando su columna.
             st.image("logo.png", use_container_width=True)
     
-    # Título centrado
     st.markdown("<h2 style='text-align: center; margin-top: -10px; margin-bottom: 10px;'>SOLAR FLEET</h2>", unsafe_allow_html=True)
     st.divider()
 
     # 1. PANTALLA DE LOGIN NORMAL
-    # ... (El código de login sigue igual) ...
-        if st.session_state['pantalla_auth'] == 'login':
-            usuario = st.text_input("Usuario (Ej. frojo)").strip().lower()
-            password = st.text_input("Contraseña", type="password")
-            
-            if st.button("Iniciar Sesión", type="primary", use_container_width=True):
-                if usuario in st.session_state['db_usuarios'] and st.session_state['db_usuarios'][usuario] == password:
-                    st.session_state['logged_in'] = True
-                    st.session_state['current_user'] = usuario.title() 
-                    st.rerun() 
-                else:
-                    st.error("❌ Usuario o contraseña incorrectos.")
-            
-            st.write("")
-            c1, c2 = st.columns(2)
-            c1.button("Crear cuenta", on_click=ir_a_registro, use_container_width=True)
-            c2.button("¿Olvidaste tu clave?", on_click=ir_a_recuperar, use_container_width=True)
+    if st.session_state['pantalla_auth'] == 'login':
+        usuario = st.text_input("Usuario (Ej. frojo)").strip().lower()
+        password = st.text_input("Contraseña", type="password")
+        
+        if st.button("Iniciar Sesión", type="primary", use_container_width=True):
+            if usuario in st.session_state['db_usuarios'] and st.session_state['db_usuarios'][usuario] == password:
+                st.session_state['logged_in'] = True
+                st.session_state['current_user'] = usuario.title() 
+                st.rerun() 
+            else:
+                st.error("❌ Usuario o contraseña incorrectos.")
+        
+        st.write("")
+        c1, c2 = st.columns(2)
+        c1.button("Crear cuenta", on_click=ir_a_registro, use_container_width=True)
+        c2.button("¿Olvidaste tu clave?", on_click=ir_a_recuperar, use_container_width=True)
 
-        # 2. PANTALLA DE REGISTRO (GENERADOR AUTOMÁTICO)
+    # 2. PANTALLA DE REGISTRO (GENERADOR AUTOMÁTICO)
         elif st.session_state['pantalla_auth'] == 'registro':
             st.subheader("Crear nueva cuenta")
             nombre = st.text_input("Nombre (Ej. Fernando)").strip().lower()
