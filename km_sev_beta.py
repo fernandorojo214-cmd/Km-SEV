@@ -20,7 +20,6 @@ cloudinary.config(
 st.set_page_config(page_title="SEVTrack Beta", layout="centered")
 
 # --- VARIABLES DE SESIÓN (EL CEREBRO DEL LOGIN) ---
-# Aquí guardamos temporalmente si el usuario ya entró y en qué pantalla de login está
 if 'logged_in' not in st.session_state:
     st.session_state['logged_in'] = False
 if 'current_user' not in st.session_state:
@@ -68,19 +67,25 @@ if not st.session_state['logged_in']:
     # Encabezado para la zona de Login
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
+        # Sub-columnas para centrar el logo perfectamente
+        c_logo1, c_logo2, c_logo3 = st.columns([1, 2, 1])
+        with c_logo2:
+            if os.path.exists("logo.png"):
+                st.image("logo.png", use_container_width=True)
+                
         st.markdown("<h2 style='text-align: center;'>SOLAR FLEET</h2>", unsafe_allow_html=True)
         st.divider()
 
         # 1. PANTALLA DE LOGIN NORMAL
         if st.session_state['pantalla_auth'] == 'login':
-            usuario = st.text_input("Usuario (Ej. juan)").strip().lower()
+            usuario = st.text_input("Usuario (Ej. frojo)").strip().lower()
             password = st.text_input("Contraseña", type="password")
             
             if st.button("Iniciar Sesión", type="primary", use_container_width=True):
                 if usuario in st.session_state['db_usuarios'] and st.session_state['db_usuarios'][usuario] == password:
                     st.session_state['logged_in'] = True
-                    st.session_state['current_user'] = usuario.title() # Lo guardamos con Mayúscula
-                    st.rerun() # Recarga la página para mostrar la app
+                    st.session_state['current_user'] = usuario.title() 
+                    st.rerun() 
                 else:
                     st.error("❌ Usuario o contraseña incorrectos.")
             
@@ -89,29 +94,42 @@ if not st.session_state['logged_in']:
             c1.button("Crear cuenta", on_click=ir_a_registro, use_container_width=True)
             c2.button("¿Olvidaste tu clave?", on_click=ir_a_recuperar, use_container_width=True)
 
-        # 2. PANTALLA DE REGISTRO
+        # 2. PANTALLA DE REGISTRO (GENERADOR AUTOMÁTICO)
         elif st.session_state['pantalla_auth'] == 'registro':
             st.subheader("Crear nueva cuenta")
-            nuevo_usr = st.text_input("Nombre").strip().lower()
-            nuevo_ape= st.text_input("Apellido").strip().lower() 
+            nombre = st.text_input("Nombre (Ej. Fernando)").strip().lower()
+            apellido = st.text_input("Apellido (Ej. Rojo)").strip().lower() 
             nueva_pass = st.text_input("Crea una contraseña", type="password")
             pass_conf = st.text_input("Confirma tu contraseña", type="password")
             
             if st.button("Registrarse", type="primary", use_container_width=True):
-                if nuevo_usr in st.session_state['db_usuarios']:
-                    st.error("Ese usuario ya existe.")
+                if not nombre or not apellido:
+                    st.error("⚠️ Por favor, ingresa tu nombre y apellido.")
                 elif nueva_pass != pass_conf:
-                    st.error("Las contraseñas no coinciden.")
+                    st.error("❌ Las contraseñas no coinciden.")
                 elif len(nueva_pass) < 4:
-                    st.error("La contraseña debe tener al menos 4 caracteres.")
+                    st.error("⚠️ La contraseña debe tener al menos 4 caracteres.")
                 else:
+                    # Lógica para crear el usuario (Primera letra del nombre + apellido sin espacios)
+                    base_usr = f"{nombre[0]}{apellido}".replace(" ", "")
+                    nuevo_usr = base_usr
+                    contador = 1
+                    
+                    # Verificamos si ya existe, si sí, le sumamos un número
+                    while nuevo_usr in st.session_state['db_usuarios']:
+                        nuevo_usr = f"{base_usr}{contador}"
+                        contador += 1
+                        
+                    # Guardamos en la base de datos simulada
                     st.session_state['db_usuarios'][nuevo_usr] = nueva_pass
-                    st.success("¡Cuenta creada! Ya puedes iniciar sesión.")
-                    ir_a_login()
+                    
+                    st.success("✅ ¡Cuenta creada exitosamente!")
+                    st.info(f"👤 Tu usuario generado es: **{nuevo_usr}**")
+                    st.warning("⚠️ IMPORTANTE: Anota este usuario para poder iniciar sesión.")
             
             st.button("🔙 Volver al Login", on_click=ir_a_login, use_container_width=True)
 
-        # 3. PANTALA RECUPERACION DE CONTRASEÑA
+        # 3. PANTALLA RECUPERACIÓN DE CONTRASEÑA
         elif st.session_state['pantalla_auth'] == 'recuperar':
             st.subheader("Recuperar contraseña")
             st.write("Para esta fase Beta, por favor contacta al administrador para reiniciar tu clave.")
@@ -141,7 +159,6 @@ else:
     conn = st.connection("gsheets", type=GSheetsConnection)
     zona_cdmx = pytz.timezone('America/Mexico_City')
     
-    # Validar si es admin usando la puerta trasera (URL) o si inició sesión con el usuario 'admin'
     es_admin = False
     if ("jefe" in st.query_params and st.query_params["jefe"] == "true") or (st.session_state['current_user'].lower() == 'admin'):
         es_admin = True
@@ -155,13 +172,12 @@ else:
     with tabs[0]:
         st.header("Registro de Inicio")
         
-        # EL GRAN CAMBIO: El nombre ya no se puede editar, viene del Login
         nombre_inicio = st.text_input("Conductor", value=st.session_state['current_user'], disabled=True)
         km_inicio = st.number_input("Kilometraje Inicial", min_value=0.0, step=0.1, value=None)
         
         if st.button("Registrar Inicio", type="primary"):
             if km_inicio is not None:
-                df = conn.read(worksheet="Hoja Beta", ttl=0) # Usamos Hoja Beta
+                df = conn.read(worksheet="Hoja Beta", ttl=0)
                 
                 for col in ['Carga del Día', 'Lugar de Carga', 'Comentarios', 'Comprobante']:
                     if col not in df.columns: df[col] = ""
@@ -186,7 +202,6 @@ else:
     # --- PESTAÑA 2: FIN DE TURNO ---
     with tabs[1]:
         st.header("Registro Final")
-        # Nombre bloqueado automáticamente
         nombre_fin = st.text_input("Nombre", value=st.session_state['current_user'], disabled=True, key="nom_f")
         km_fin = st.number_input("Kilometraje Final", min_value=0.0, step=0.1, value=None)
         carga = st.text_input("Carga ($)", placeholder="Ej: 500")
