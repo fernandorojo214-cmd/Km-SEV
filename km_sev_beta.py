@@ -64,22 +64,19 @@ def calcular_total_carga(texto):
 # --- PANTALLAS DE AUTENTICACIÓN (LOGIN) ---
 if not st.session_state['logged_in']:
     
-    # Encabezado súper compacto de lado a lado
-    col1, col2, col3 = st.columns([1, 6, 1]) # Maximizamos el espacio del contenedor central
+    # Encabezado para la zona de Login (Optimizado para Celular)
+    col1, col2, col3 = st.columns([1, 5, 1]) # Da más espacio al centro en pantallas chicas
     with col2:
+        st.write("")
         
-        # Proporción muy ajustada: 1 parte para el logo, 4 partes para el texto
-        c_logo, c_titulo = st.columns([1, 4])
-        
-        with c_logo:
+        # Sub-columnas exclusivas para centrar el logo arriba
+        c_izq, c_centro, c_der = st.columns([1, 2, 1])
+        with c_centro:
             if os.path.exists("logo.png"):
-                # Reducimos el logo a 55px para que no empuje al texto en el celular
-                st.image("logo.png", width=55) 
-                
-        with c_titulo:
-            # Usamos un tamaño de letra un poco más chico (h3 en lugar de h2) para el teléfono
-            st.markdown("<h3 style='margin-top: 12px; margin-left: -10px; white-space: nowrap;'>SOLAR FLEET</h3>", unsafe_allow_html=True)
-            
+                st.image("logo.png", width=110) # Tamaño ideal y compacto para teléfono
+        
+        # Título centrado abajo del logo
+        st.markdown("<h2 style='text-align: center; margin-top: -5px; margin-bottom: 10px;'>SOLAR FLEET</h2>", unsafe_allow_html=True)
         st.divider()
 
         # 1. PANTALLA DE LOGIN NORMAL
