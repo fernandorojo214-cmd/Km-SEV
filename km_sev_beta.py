@@ -93,7 +93,7 @@ if not st.session_state['logged_in']:
         elif st.session_state['pantalla_auth'] == 'registro':
             st.subheader("Crear nueva cuenta")
             nuevo_usr = st.text_input("Nombre").strip().lower()
-            nuevo_ape= st.tex_input("Apellido").strp().lower()
+            nuevo_ape= st.text_input("Apellido").strip().lower() 
             nueva_pass = st.text_input("Crea una contraseña", type="password")
             pass_conf = st.text_input("Confirma tu contraseña", type="password")
             
