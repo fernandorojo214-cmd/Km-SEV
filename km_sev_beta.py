@@ -68,7 +68,7 @@ if not st.session_state['logged_in']:
     # Encabezado para la zona de Login
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        st.markdown("<h2 style='text-align: center;'>Portal de Conductores</h2>", unsafe_allow_html=True)
+        st.markdown("<h2 style='text-align: center;'>SOLAR FLEET</h2>", unsafe_allow_html=True)
         st.divider()
 
         # 1. PANTALLA DE LOGIN NORMAL
@@ -76,7 +76,7 @@ if not st.session_state['logged_in']:
             usuario = st.text_input("Usuario (Ej. juan)").strip().lower()
             password = st.text_input("Contraseña", type="password")
             
-            if st.button("🚀 Iniciar Sesión", type="primary", use_container_width=True):
+            if st.button("Iniciar Sesión", type="primary", use_container_width=True):
                 if usuario in st.session_state['db_usuarios'] and st.session_state['db_usuarios'][usuario] == password:
                     st.session_state['logged_in'] = True
                     st.session_state['current_user'] = usuario.title() # Lo guardamos con Mayúscula
@@ -92,7 +92,8 @@ if not st.session_state['logged_in']:
         # 2. PANTALLA DE REGISTRO
         elif st.session_state['pantalla_auth'] == 'registro':
             st.subheader("Crear nueva cuenta")
-            nuevo_usr = st.text_input("Elige un nombre de usuario").strip().lower()
+            nuevo_usr = st.text_input("Nombre").strip().lower()
+            nuevo_ape= st.tex_input("Apellido")
             nueva_pass = st.text_input("Crea una contraseña", type="password")
             pass_conf = st.text_input("Confirma tu contraseña", type="password")
             
@@ -110,7 +111,7 @@ if not st.session_state['logged_in']:
             
             st.button("🔙 Volver al Login", on_click=ir_a_login, use_container_width=True)
 
-        # 3. PANTALLA DE RECUPERACIÓN
+        # 3. PANTALA RECUPERACION DE CONTRASEÑA
         elif st.session_state['pantalla_auth'] == 'recuperar':
             st.subheader("Recuperar contraseña")
             st.write("Para esta fase Beta, por favor contacta al administrador para reiniciar tu clave.")
