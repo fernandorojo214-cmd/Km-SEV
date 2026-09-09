@@ -5,3 +5,4 @@ pytz
 google-api-python-client
 google-auth
 cloudinary
+streamlit-authenticator==0.3.2
