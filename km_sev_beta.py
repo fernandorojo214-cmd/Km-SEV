@@ -34,7 +34,7 @@ COLUMNAS_ESPERADAS = [
     'Total Recorrido', 'Carga del Día', 'Lugar de Carga', 'Comentarios',
     'Comprobante'
 ]
-COLUMNAS_USUARIOS = ['Nombre', 'Username', 'Password', 'Rol']
+COLUMNAS_USUARIOS = ['Nombre', 'Username', 'Password', 'Rol', 'Activo']
 
 # --- FUNCIONES DE APOYO ---
 def subir_archivo_a_nube(file_obj):
@@ -80,6 +80,18 @@ def horas_desde(fecha_str):
         return None
 
 
+def esta_activo(valor):
+    """Interpreta la columna 'Activo' de forma flexible: TRUE/Sí/1 = activo.
+    Si la celda está vacía (filas viejas antes de agregar esta columna),
+    se considera activo por defecto para no bloquear a nadie sin querer."""
+    if valor is None or (isinstance(valor, float) and pd.isna(valor)):
+        return True
+    texto = str(valor).strip().lower()
+    if texto in ("", "nan", "none"):
+        return True
+    return texto in ("true", "verdadero", "si", "sí", "1", "activo")
+
+
 @st.cache_data(ttl=30)
 def cargar_credenciales(_conn):
     """Lee la hoja 'Usuarios' y arma el diccionario que necesita
@@ -97,6 +109,8 @@ def cargar_credenciales(_conn):
         username = str(fila['Username']).strip()
         if not username:
             continue
+        if not esta_activo(fila.get('Activo')):
+            continue  # conductor dado de baja: no puede iniciar sesión
         credenciales["usernames"][username] = {
             "name": str(fila['Nombre']).strip(),
             "password": str(fila['Password']).strip(),  # ya viene hasheado
@@ -124,7 +138,7 @@ def agregar_usuario(conn, nombre, username, password_plano, rol):
             return False, "Ese username ya existe. Elige otro."
 
         hash_pw = bcrypt.hashpw(password_plano.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-        nueva_fila = {"Nombre": nombre, "Username": username, "Password": hash_pw, "Rol": rol}
+        nueva_fila = {"Nombre": nombre, "Username": username, "Password": hash_pw, "Rol": rol, "Activo": "TRUE"}
         df = pd.concat([df, pd.DataFrame([nueva_fila])], ignore_index=True)
 
         # Solo escribimos las 4 columnas que nos interesan, en orden fijo,
@@ -137,6 +151,31 @@ def agregar_usuario(conn, nombre, username, password_plano, rol):
     except Exception as e:
         # Antes esto podía fallar en silencio o tronar toda la app.
         # Ahora regresamos el error real para poder diagnosticarlo.
+        return False, f"❌ Error técnico al guardar: {type(e).__name__}: {e}"
+
+
+def cambiar_estado_usuario(conn, username, activar: bool):
+    """Da de baja (o reactiva) a un conductor sin borrar su historial.
+    Simplemente le apaga el acceso cambiando la columna 'Activo'."""
+    try:
+        df = conn.read(worksheet="Usuarios", ttl=0)
+        df.columns = [str(c).strip() for c in df.columns]
+        df = asegurar_columnas(df, COLUMNAS_USUARIOS)
+
+        username_buscado = username.strip().lower()
+        mascara = df['Username'].astype(str).str.strip().str.lower() == username_buscado
+
+        if not mascara.any():
+            return False, "No se encontró ese conductor."
+
+        df.loc[mascara, 'Activo'] = "TRUE" if activar else "FALSE"
+        df = df[COLUMNAS_USUARIOS]
+        conn.update(worksheet="Usuarios", data=df)
+        st.cache_data.clear()
+
+        accion = "reactivado" if activar else "dado de baja"
+        return True, f"Conductor {accion} correctamente."
+    except Exception as e:
         return False, f"❌ Error técnico al guardar: {type(e).__name__}: {e}"
 
 
@@ -156,25 +195,6 @@ zona_cdmx = pytz.timezone('America/Mexico_City')
 # LOGIN
 # =========================================================
 credenciales = cargar_credenciales(conn)
-
-# =========================================================
-# 🔧 PANEL DE DIAGNÓSTICO TEMPORAL — bórralo cuando ya funcione el login
-# Muestra qué está leyendo realmente la app de la pestaña "Usuarios",
-# sin exponer la contraseña completa (solo los primeros/últimos caracteres).
-# =========================================================
-with st.expander("🔧 Diagnóstico temporal (bórrame después)"):
-    df_debug = conn.read(worksheet="Usuarios", ttl=0)
-    st.write("Encabezados reales de la hoja:", list(df_debug.columns))
-    for _, fila in df_debug.iterrows():
-        pw = str(fila.get('Password', ''))
-        pw_visible = f"{pw[:8]}...{pw[-4:]}" if len(pw) > 12 else pw
-        st.write({
-            "Nombre": fila.get('Nombre'),
-            "Username": fila.get('Username'),
-            "Password (parcial)": pw_visible,
-            "Largo del hash": len(pw),
-            "Rol": fila.get('Rol'),
-        })
 
 authenticator = stauth.Authenticate(
     credenciales,
@@ -484,6 +504,47 @@ if es_admin:
                     )
                     (st.success if ok else st.error)(mensaje)
 
+        # --- DAR DE BAJA / REACTIVAR CONDUCTORES ---
+        st.divider()
+        st.subheader("🚫 Dar de Baja / Reactivar Conductor")
+        st.caption(
+            "Desactivar un conductor le quita el acceso a la app, "
+            "pero conserva todo su historial de turnos. Puedes reactivarlo cuando quieras."
+        )
+
+        df_usuarios_actual = conn.read(worksheet="Usuarios", ttl=0)
+        df_usuarios_actual.columns = [str(c).strip() for c in df_usuarios_actual.columns]
+        df_usuarios_actual = asegurar_columnas(df_usuarios_actual, COLUMNAS_USUARIOS)
+        df_usuarios_actual = df_usuarios_actual.dropna(subset=['Username'])
+
+        if df_usuarios_actual.empty:
+            st.info("Aún no hay conductores registrados.")
+        else:
+            opciones_usuarios = {}
+            for _, fila in df_usuarios_actual.iterrows():
+                uname = str(fila['Username']).strip()
+                nombre_disp = str(fila['Nombre']).strip()
+                activo = esta_activo(fila.get('Activo'))
+                etiqueta = f"{nombre_disp} ({uname}) — {'🟢 Activo' if activo else '🔴 Dado de baja'}"
+                opciones_usuarios[etiqueta] = (uname, activo)
+
+            seleccion_usuario = st.selectbox("Selecciona un conductor:", list(opciones_usuarios.keys()))
+            uname_sel, activo_sel = opciones_usuarios[seleccion_usuario]
+
+            col_b1, col_b2 = st.columns(2)
+            with col_b1:
+                if st.button("🔴 Dar de baja", disabled=not activo_sel, use_container_width=True):
+                    ok, mensaje = cambiar_estado_usuario(conn, uname_sel, activar=False)
+                    (st.success if ok else st.error)(mensaje)
+                    if ok:
+                        st.rerun()
+            with col_b2:
+                if st.button("🟢 Reactivar", disabled=activo_sel, use_container_width=True):
+                    ok, mensaje = cambiar_estado_usuario(conn, uname_sel, activar=True)
+                    (st.success if ok else st.error)(mensaje)
+                    if ok:
+                        st.rerun()
+
         # --- GESTOR DE ARCHIVOS (LIBERAR ESPACIO) ---
         st.divider()
         st.subheader("🧹 Gestor de Archivos (Liberar Espacio)")
@@ -503,3 +564,4 @@ if es_admin:
                         st.error(f"Error técnico al intentar borrar: {e}")
             else:
                 st.error("❌ Por favor ingresa un enlace válido de Cloudinary.")
+                
