@@ -179,6 +179,30 @@ def cambiar_estado_usuario(conn, username, activar: bool):
         return False, f"❌ Error técnico al guardar: {type(e).__name__}: {e}"
 
 
+def resetear_password(conn, username, nueva_password_plano):
+    """Permite al admin poner una contraseña temporal nueva a un conductor
+    que la olvidó, sin necesidad de tocar el Google Sheet a mano."""
+    try:
+        df = conn.read(worksheet="Usuarios", ttl=0)
+        df.columns = [str(c).strip() for c in df.columns]
+        df = asegurar_columnas(df, COLUMNAS_USUARIOS)
+
+        username_buscado = username.strip().lower()
+        mascara = df['Username'].astype(str).str.strip().str.lower() == username_buscado
+
+        if not mascara.any():
+            return False, "No se encontró ese conductor."
+
+        hash_pw = bcrypt.hashpw(nueva_password_plano.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+        df.loc[mascara, 'Password'] = hash_pw
+        df = df[COLUMNAS_USUARIOS]
+        conn.update(worksheet="Usuarios", data=df)
+        st.cache_data.clear()
+        return True, "Contraseña restablecida correctamente. Comparte la nueva contraseña con el conductor."
+    except Exception as e:
+        return False, f"❌ Error técnico al guardar: {type(e).__name__}: {e}"
+
+
 # --- ENCABEZADO ---
 col1, col2 = st.columns([1, 4])
 with col1:
@@ -438,8 +462,16 @@ if es_admin:
                 df_dash['Carga del Día'] = pd.to_numeric(df_dash['Carga del Día'], errors='coerce').fillna(0)
 
                 lista_semanas = sorted(df_dash['Semana'].unique(), reverse=True)
-                semana_sel = st.selectbox("📅 Selecciona la Semana:", ["Todas"] + lista_semanas)
+                col_f1, col_f2 = st.columns(2)
+                with col_f1:
+                    semana_sel = st.selectbox("📅 Selecciona la Semana:", ["Todas"] + lista_semanas)
+                with col_f2:
+                    lista_conductores_dash = sorted(df_dash['Nombre'].dropna().astype(str).str.strip().unique())
+                    conductor_sel = st.selectbox("🧑‍✈️ Filtrar por conductor:", ["Todos"] + lista_conductores_dash)
+
                 df_f = df_dash if semana_sel == "Todas" else df_dash[df_dash['Semana'] == semana_sel]
+                if conductor_sel != "Todos":
+                    df_f = df_f[df_f['Nombre'].astype(str).str.strip() == conductor_sel]
 
                 df_f['Lugar de Carga'] = df_f['Lugar de Carga'].astype(str).str.strip().str.title()
                 df_lugares = df_f[~df_f['Lugar de Carga'].isin(["N/A", "None", "", "Nan"])]
@@ -545,23 +577,49 @@ if es_admin:
                     if ok:
                         st.rerun()
 
-        # --- GESTOR DE ARCHIVOS (LIBERAR ESPACIO) ---
-        st.divider()
-        st.subheader("🧹 Gestor de Archivos (Liberar Espacio)")
-        link_a_borrar = st.text_input("Enlace del Comprobante (URL):", placeholder="https://res.cloudinary.com/...")
+            # --- RESETEAR CONTRASEÑA ---
+            st.divider()
+            st.subheader("🔑 Resetear Contraseña")
+            st.caption("Úsalo cuando un conductor olvide su contraseña. Comparte la nueva con él por fuera de la app.")
 
-        if st.button("🗑️ Eliminar permanentemente de la nube", type="primary"):
-            if "cloudinary.com" in link_a_borrar:
-                with st.spinner("Borrando archivo..."):
-                    try:
-                        public_id, res_type = extraer_datos_cloudinary(link_a_borrar)
-                        respuesta = cloudinary.uploader.destroy(public_id, resource_type=res_type)
-                        if respuesta.get('result') == 'ok':
-                            st.success("✅ Archivo eliminado correctamente. ¡Espacio liberado!")
-                        else:
-                            st.warning("⚠️ No se encontró el archivo. Es probable que ya haya sido borrado.")
-                    except Exception as e:
-                        st.error(f"Error técnico al intentar borrar: {e}")
-            else:
-                st.error("❌ Por favor ingresa un enlace válido de Cloudinary.")
-                
+            with st.form("form_reset_password", clear_on_submit=True):
+                nueva_pw = st.text_input("Nueva contraseña temporal", type="password")
+                confirmar_reset = st.form_submit_button(
+                    f"🔑 Restablecer contraseña de {uname_sel}", type="primary", use_container_width=True
+                )
+                if confirmar_reset:
+                    if not nueva_pw:
+                        st.warning("⚠️ Escribe la nueva contraseña.")
+                    elif len(nueva_pw) < 6:
+                        st.warning("⚠️ Usa al menos 6 caracteres.")
+                    else:
+                        ok, mensaje = resetear_password(conn, uname_sel, nueva_pw)
+                        (st.success if ok else st.error)(mensaje)
+
+        # --- GESTOR DE ARCHIVOS (LIBERAR ESPACIO) ---
+        # Se movió fuera de la vista normal del admin: es una acción
+        # irreversible (borra archivos permanentemente) y no es algo que
+        # se use seguido, así que ahora vive detrás de un modo de
+        # mantenimiento para evitar clics accidentales. Para verla, entra
+        # con ?mantenimiento=true además de ?jefe=true en la URL.
+        modo_mantenimiento = st.query_params.get("mantenimiento") == "true"
+        if modo_mantenimiento:
+            st.divider()
+            st.subheader("🧹 Gestor de Archivos (Liberar Espacio)")
+            st.warning("⚠️ Modo mantenimiento — esta acción borra archivos de forma permanente e irreversible.")
+            link_a_borrar = st.text_input("Enlace del Comprobante (URL):", placeholder="https://res.cloudinary.com/...")
+
+            if st.button("🗑️ Eliminar permanentemente de la nube", type="primary"):
+                if "cloudinary.com" in link_a_borrar:
+                    with st.spinner("Borrando archivo..."):
+                        try:
+                            public_id, res_type = extraer_datos_cloudinary(link_a_borrar)
+                            respuesta = cloudinary.uploader.destroy(public_id, resource_type=res_type)
+                            if respuesta.get('result') == 'ok':
+                                st.success("✅ Archivo eliminado correctamente. ¡Espacio liberado!")
+                            else:
+                                st.warning("⚠️ No se encontró el archivo. Es probable que ya haya sido borrado.")
+                        except Exception as e:
+                            st.error(f"Error técnico al intentar borrar: {e}")
+                else:
+                    st.error("❌ Por favor ingresa un enlace válido de Cloudinary.")
