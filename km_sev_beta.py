@@ -92,20 +92,20 @@ def esta_activo(valor):
     return texto in ("true", "verdadero", "si", "sí", "1", "activo")
 
 
-@st.cache_data(ttl=20)
+@st.cache_data(ttl=60)
 def leer_usuarios(_conn):
     """Lectura centralizada y cacheada de la pestaña 'Usuarios'.
     Antes cada sección del Dashboard leía la hoja por su cuenta con
     ttl=0 (sin caché), lo que disparaba demasiadas solicitudes a la
     API de Google Sheets y provocaba errores de límite de solicitudes
     (APIError / rate limit). Ahora todo pasa por aquí."""
-    df = _conn.read(worksheet="Usuarios", ttl=20)
+    df = _conn.read(worksheet="Usuarios", ttl=60)
     df.columns = [str(c).strip() for c in df.columns]
     df = asegurar_columnas(df, COLUMNAS_USUARIOS)
     return df
 
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=60)
 def cargar_credenciales(_conn):
     """Lee la hoja 'Usuarios' y arma el diccionario que necesita
     streamlit-authenticator: {usernames: {user: {name, password, role}}}"""
@@ -230,7 +230,14 @@ zona_cdmx = pytz.timezone('America/Mexico_City')
 # =========================================================
 # LOGIN
 # =========================================================
-credenciales = cargar_credenciales(conn)
+try:
+    credenciales = cargar_credenciales(conn)
+except Exception as e:
+    st.error(_mensaje_error_amigable(e))
+    if st.button("🔄 Reintentar"):
+        st.cache_data.clear()
+        st.rerun()
+    st.stop()
 
 authenticator = stauth.Authenticate(
     credenciales,
