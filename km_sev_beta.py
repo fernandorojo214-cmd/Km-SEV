@@ -93,8 +93,12 @@ def esta_activo(valor):
 
 
 @st.cache_data(ttl=60)
-def leer_usuarios(_conn):
+def leer_usuarios(_conn, version=0):
     """Lectura centralizada y cacheada de la pestaña 'Usuarios'.
+    El parámetro 'version' se usa como "cache-buster": cada vez que se
+    guarda un cambio (alta, baja, reset de contraseña) se incrementa
+    en session_state, forzando una lectura nueva en vez de confiar
+    únicamente en que st.cache_data.clear() alcance a todo.
     Antes cada sección del Dashboard leía la hoja por su cuenta con
     ttl=0 (sin caché), lo que disparaba demasiadas solicitudes a la
     API de Google Sheets y provocaba errores de límite de solicitudes
@@ -110,11 +114,24 @@ def leer_usuarios(_conn):
     return df
 
 
+def version_usuarios():
+    """Contador que forzamos a subir cada vez que se guarda un cambio
+    en Usuarios, para invalidar el caché de forma explícita y confiable."""
+    if "usuarios_version" not in st.session_state:
+        st.session_state["usuarios_version"] = 0
+    return st.session_state["usuarios_version"]
+
+
+def invalidar_cache_usuarios():
+    st.session_state["usuarios_version"] = version_usuarios() + 1
+    st.cache_data.clear()
+
+
 @st.cache_data(ttl=60)
 def cargar_credenciales(_conn):
     """Lee la hoja 'Usuarios' y arma el diccionario que necesita
     streamlit-authenticator: {usernames: {user: {name, password, role}}}"""
-    df = leer_usuarios(_conn)
+    df = leer_usuarios(_conn, version_usuarios())
     df = df.dropna(subset=['Username'])
 
     credenciales = {"usernames": {}}
@@ -155,7 +172,7 @@ def agregar_usuario(conn, nombre, username, password_plano, rol):
     """Usado por el admin para dar de alta un nuevo conductor.
     Hashea la contraseña antes de guardarla — nunca se guarda en texto plano."""
     try:
-        df = leer_usuarios(conn)
+        df = leer_usuarios(conn, version_usuarios())
 
         if username in df['Username'].astype(str).str.strip().values:
             return False, "Ese username ya existe. Elige otro."
@@ -169,7 +186,7 @@ def agregar_usuario(conn, nombre, username, password_plano, rol):
         df = df[COLUMNAS_USUARIOS]
 
         conn.update(worksheet="Usuarios", data=df)
-        st.cache_data.clear()
+        invalidar_cache_usuarios()
         return True, "Conductor agregado correctamente."
     except Exception as e:
         return False, _mensaje_error_amigable(e)
@@ -179,7 +196,7 @@ def cambiar_estado_usuario(conn, username, activar: bool):
     """Da de baja (o reactiva) a un conductor sin borrar su historial.
     Simplemente le apaga el acceso cambiando la columna 'Activo'."""
     try:
-        df = leer_usuarios(conn)
+        df = leer_usuarios(conn, version_usuarios())
 
         username_buscado = username.strip().lower()
         mascara = df['Username'].astype(str).str.strip().str.lower() == username_buscado
@@ -190,7 +207,7 @@ def cambiar_estado_usuario(conn, username, activar: bool):
         df.loc[mascara, 'Activo'] = "TRUE" if activar else "FALSE"
         df = df[COLUMNAS_USUARIOS]
         conn.update(worksheet="Usuarios", data=df)
-        st.cache_data.clear()
+        invalidar_cache_usuarios()
 
         accion = "reactivado" if activar else "dado de baja"
         return True, f"Conductor {accion} correctamente."
@@ -202,7 +219,7 @@ def resetear_password(conn, username, nueva_password_plano):
     """Permite al admin poner una contraseña temporal nueva a un conductor
     que la olvidó, sin necesidad de tocar el Google Sheet a mano."""
     try:
-        df = leer_usuarios(conn)
+        df = leer_usuarios(conn, version_usuarios())
 
         username_buscado = username.strip().lower()
         mascara = df['Username'].astype(str).str.strip().str.lower() == username_buscado
@@ -214,7 +231,7 @@ def resetear_password(conn, username, nueva_password_plano):
         df.loc[mascara, 'Password'] = hash_pw
         df = df[COLUMNAS_USUARIOS]
         conn.update(worksheet="Usuarios", data=df)
-        st.cache_data.clear()
+        invalidar_cache_usuarios()
         return True, "Contraseña restablecida correctamente. Comparte la nueva contraseña con el conductor."
     except Exception as e:
         return False, _mensaje_error_amigable(e)
@@ -562,13 +579,19 @@ if es_admin:
 
         # --- DAR DE BAJA / REACTIVAR CONDUCTORES ---
         st.divider()
-        st.subheader("🚫 Dar de Baja / Reactivar Conductor")
+        col_titulo, col_refrescar = st.columns([4, 1])
+        with col_titulo:
+            st.subheader("🚫 Dar de Baja / Reactivar Conductor")
+        with col_refrescar:
+            if st.button("🔄 Actualizar lista"):
+                invalidar_cache_usuarios()
+                st.rerun()
         st.caption(
             "Desactivar un conductor le quita el acceso a la app, "
             "pero conserva todo su historial de turnos. Puedes reactivarlo cuando quieras."
         )
 
-        df_usuarios_actual = leer_usuarios(conn)
+        df_usuarios_actual = leer_usuarios(conn, version_usuarios())
         df_usuarios_actual = df_usuarios_actual.dropna(subset=['Username'])
 
         if df_usuarios_actual.empty:
