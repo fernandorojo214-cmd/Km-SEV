@@ -92,14 +92,14 @@ def esta_activo(valor):
     return texto in ("true", "verdadero", "si", "sí", "1", "activo")
 
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=60)
 def leer_usuarios(_conn):
     """Lectura centralizada y cacheada de la pestaña 'Usuarios'.
     Antes cada sección del Dashboard leía la hoja por su cuenta con
     ttl=0 (sin caché), lo que disparaba demasiadas solicitudes a la
     API de Google Sheets y provocaba errores de límite de solicitudes
     (APIError / rate limit). Ahora todo pasa por aquí."""
-    df = _conn.read(worksheet="Usuarios", ttl=30)
+    df = _conn.read(worksheet="Usuarios", ttl=60)
     df.columns = [str(c).strip() for c in df.columns]
     df = asegurar_columnas(df, COLUMNAS_USUARIOS)
     # Forzamos tipo texto en estas columnas: si venían vacías en Google
@@ -110,7 +110,7 @@ def leer_usuarios(_conn):
     return df
 
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=60)
 def cargar_credenciales(_conn):
     """Lee la hoja 'Usuarios' y arma el diccionario que necesita
     streamlit-authenticator: {usernames: {user: {name, password, role}}}"""
@@ -574,16 +574,29 @@ if es_admin:
         if df_usuarios_actual.empty:
             st.info("Aún no hay conductores registrados.")
         else:
-            opciones_usuarios = {}
+            # Usamos el username como "valor" real de la selección (estable),
+            # y una etiqueta aparte solo para mostrar — así, si el estado
+            # cambia (Activo/Dado de baja) y el texto de la etiqueta cambia,
+            # no se pierde la selección ni salta a otro conductor por error.
+            etiquetas_por_usuario = {}
+            estado_por_usuario = {}
             for _, fila in df_usuarios_actual.iterrows():
                 uname = str(fila['Username']).strip()
                 nombre_disp = str(fila['Nombre']).strip()
                 activo = esta_activo(fila.get('Activo'))
-                etiqueta = f"{nombre_disp} ({uname}) — {'🟢 Activo' if activo else '🔴 Dado de baja'}"
-                opciones_usuarios[etiqueta] = (uname, activo)
+                etiquetas_por_usuario[uname] = (
+                    f"{nombre_disp} ({uname}) — {'🟢 Activo' if activo else '🔴 Dado de baja'}"
+                )
+                estado_por_usuario[uname] = activo
 
-            seleccion_usuario = st.selectbox("Selecciona un conductor:", list(opciones_usuarios.keys()))
-            uname_sel, activo_sel = opciones_usuarios[seleccion_usuario]
+            lista_usernames = list(etiquetas_por_usuario.keys())
+            uname_sel = st.selectbox(
+                "Selecciona un conductor:",
+                lista_usernames,
+                format_func=lambda u: etiquetas_por_usuario.get(u, u),
+                key="selector_conductor_gestion",
+            )
+            activo_sel = estado_por_usuario.get(uname_sel, True)
 
             col_b1, col_b2 = st.columns(2)
             with col_b1:
