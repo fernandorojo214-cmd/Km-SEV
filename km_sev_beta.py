@@ -138,6 +138,25 @@ zona_cdmx = pytz.timezone('America/Mexico_City')
 # =========================================================
 credenciales = cargar_credenciales(conn)
 
+# =========================================================
+# 🔧 PANEL DE DIAGNÓSTICO TEMPORAL — bórralo cuando ya funcione el login
+# Muestra qué está leyendo realmente la app de la pestaña "Usuarios",
+# sin exponer la contraseña completa (solo los primeros/últimos caracteres).
+# =========================================================
+with st.expander("🔧 Diagnóstico temporal (bórrame después)"):
+    df_debug = conn.read(worksheet="Usuarios", ttl=0)
+    st.write("Encabezados reales de la hoja:", list(df_debug.columns))
+    for _, fila in df_debug.iterrows():
+        pw = str(fila.get('Password', ''))
+        pw_visible = f"{pw[:8]}...{pw[-4:]}" if len(pw) > 12 else pw
+        st.write({
+            "Nombre": fila.get('Nombre'),
+            "Username": fila.get('Username'),
+            "Password (parcial)": pw_visible,
+            "Largo del hash": len(pw),
+            "Rol": fila.get('Rol'),
+        })
+
 authenticator = stauth.Authenticate(
     credenciales,
     st.secrets["cookie"]["name"],
