@@ -102,6 +102,11 @@ def leer_usuarios(_conn):
     df = _conn.read(worksheet="Usuarios", ttl=60)
     df.columns = [str(c).strip() for c in df.columns]
     df = asegurar_columnas(df, COLUMNAS_USUARIOS)
+    # Forzamos tipo texto en estas columnas: si venían vacías en Google
+    # Sheets, pandas las infiere como numéricas (float64) y truena al
+    # intentar meterles texto como "TRUE"/"FALSE" o un hash de contraseña.
+    for col in COLUMNAS_USUARIOS:
+        df[col] = df[col].astype("object")
     return df
 
 
