@@ -92,16 +92,24 @@ def esta_activo(valor):
     return texto in ("true", "verdadero", "si", "sí", "1", "activo")
 
 
+@st.cache_data(ttl=20)
+def leer_usuarios(_conn):
+    """Lectura centralizada y cacheada de la pestaña 'Usuarios'.
+    Antes cada sección del Dashboard leía la hoja por su cuenta con
+    ttl=0 (sin caché), lo que disparaba demasiadas solicitudes a la
+    API de Google Sheets y provocaba errores de límite de solicitudes
+    (APIError / rate limit). Ahora todo pasa por aquí."""
+    df = _conn.read(worksheet="Usuarios", ttl=20)
+    df.columns = [str(c).strip() for c in df.columns]
+    df = asegurar_columnas(df, COLUMNAS_USUARIOS)
+    return df
+
+
 @st.cache_data(ttl=30)
 def cargar_credenciales(_conn):
     """Lee la hoja 'Usuarios' y arma el diccionario que necesita
     streamlit-authenticator: {usernames: {user: {name, password, role}}}"""
-    df = _conn.read(worksheet="Usuarios", ttl=30)
-    # Limpiamos espacios invisibles en los encabezados (ej. "Nombre "),
-    # para que siempre matcheen con COLUMNAS_USUARIOS sin importar
-    # cómo haya quedado el Google Sheet.
-    df.columns = [str(c).strip() for c in df.columns]
-    df = asegurar_columnas(df, COLUMNAS_USUARIOS)
+    df = leer_usuarios(_conn)
     df = df.dropna(subset=['Username'])
 
     credenciales = {"usernames": {}}
@@ -122,17 +130,27 @@ def cargar_credenciales(_conn):
     return credenciales
 
 
+def _mensaje_error_amigable(e):
+    """Traduce errores técnicos comunes de Google Sheets a algo entendible."""
+    texto = str(e).lower()
+    if "429" in texto or "quota" in texto or "rate" in texto:
+        return (
+            "⏳ Google Sheets está recibiendo demasiadas solicitudes en poco tiempo. "
+            "Espera unos 30-60 segundos y vuelve a intentar."
+        )
+    if "403" in texto or "permission" in texto:
+        return (
+            "🔒 La cuenta de servicio no tiene permiso de edición sobre el Google Sheet. "
+            "Verifica que esté compartida con permiso de 'Editor'."
+        )
+    return f"❌ Error técnico al guardar: {type(e).__name__}: {e}"
+
+
 def agregar_usuario(conn, nombre, username, password_plano, rol):
     """Usado por el admin para dar de alta un nuevo conductor.
     Hashea la contraseña antes de guardarla — nunca se guarda en texto plano."""
     try:
-        df = conn.read(worksheet="Usuarios", ttl=0)
-        df = asegurar_columnas(df, COLUMNAS_USUARIOS)
-
-        # Limpiamos nombres de columnas con espacios invisibles (la causa
-        # del bug anterior con "Nombre "), para no crear columnas duplicadas.
-        df.columns = [str(c).strip() for c in df.columns]
-        df = asegurar_columnas(df, COLUMNAS_USUARIOS)
+        df = leer_usuarios(conn)
 
         if username in df['Username'].astype(str).str.strip().values:
             return False, "Ese username ya existe. Elige otro."
@@ -149,18 +167,14 @@ def agregar_usuario(conn, nombre, username, password_plano, rol):
         st.cache_data.clear()
         return True, "Conductor agregado correctamente."
     except Exception as e:
-        # Antes esto podía fallar en silencio o tronar toda la app.
-        # Ahora regresamos el error real para poder diagnosticarlo.
-        return False, f"❌ Error técnico al guardar: {type(e).__name__}: {e}"
+        return False, _mensaje_error_amigable(e)
 
 
 def cambiar_estado_usuario(conn, username, activar: bool):
     """Da de baja (o reactiva) a un conductor sin borrar su historial.
     Simplemente le apaga el acceso cambiando la columna 'Activo'."""
     try:
-        df = conn.read(worksheet="Usuarios", ttl=0)
-        df.columns = [str(c).strip() for c in df.columns]
-        df = asegurar_columnas(df, COLUMNAS_USUARIOS)
+        df = leer_usuarios(conn)
 
         username_buscado = username.strip().lower()
         mascara = df['Username'].astype(str).str.strip().str.lower() == username_buscado
@@ -176,16 +190,14 @@ def cambiar_estado_usuario(conn, username, activar: bool):
         accion = "reactivado" if activar else "dado de baja"
         return True, f"Conductor {accion} correctamente."
     except Exception as e:
-        return False, f"❌ Error técnico al guardar: {type(e).__name__}: {e}"
+        return False, _mensaje_error_amigable(e)
 
 
 def resetear_password(conn, username, nueva_password_plano):
     """Permite al admin poner una contraseña temporal nueva a un conductor
     que la olvidó, sin necesidad de tocar el Google Sheet a mano."""
     try:
-        df = conn.read(worksheet="Usuarios", ttl=0)
-        df.columns = [str(c).strip() for c in df.columns]
-        df = asegurar_columnas(df, COLUMNAS_USUARIOS)
+        df = leer_usuarios(conn)
 
         username_buscado = username.strip().lower()
         mascara = df['Username'].astype(str).str.strip().str.lower() == username_buscado
@@ -200,7 +212,7 @@ def resetear_password(conn, username, nueva_password_plano):
         st.cache_data.clear()
         return True, "Contraseña restablecida correctamente. Comparte la nueva contraseña con el conductor."
     except Exception as e:
-        return False, f"❌ Error técnico al guardar: {type(e).__name__}: {e}"
+        return False, _mensaje_error_amigable(e)
 
 
 # --- ENCABEZADO ---
@@ -544,9 +556,7 @@ if es_admin:
             "pero conserva todo su historial de turnos. Puedes reactivarlo cuando quieras."
         )
 
-        df_usuarios_actual = conn.read(worksheet="Usuarios", ttl=0)
-        df_usuarios_actual.columns = [str(c).strip() for c in df_usuarios_actual.columns]
-        df_usuarios_actual = asegurar_columnas(df_usuarios_actual, COLUMNAS_USUARIOS)
+        df_usuarios_actual = leer_usuarios(conn)
         df_usuarios_actual = df_usuarios_actual.dropna(subset=['Username'])
 
         if df_usuarios_actual.empty:
