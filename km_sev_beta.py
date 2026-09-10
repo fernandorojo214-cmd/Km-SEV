@@ -8,13 +8,17 @@ import cloudinary
 import cloudinary.uploader
 import cloudinary.api
 import streamlit_authenticator as stauth
+import bcrypt
 from streamlit_gsheets import GSheetsConnection
 
 # =========================================================
 # CONFIGURACIÓN (TODO DESDE SECRETS, NADA HARDCODEADO)
 # =========================================================
 # Ver secrets.toml.example para el formato completo esperado.
-# Requiere en requirements.txt: streamlit-authenticator==0.3.2
+# Requiere en requirements.txt la MISMA versión de streamlit-authenticator
+# que tengas instalada localmente (ver diagnostico_auth.py). Este código
+# usa la API de la rama 0.4.x (login basado en st.session_state, sin la
+# clase Hasher — el hash de contraseñas se hace con bcrypt directamente).
 
 cloudinary.config(
     cloud_name=st.secrets["cloudinary"]["cloud_name"],
@@ -93,6 +97,9 @@ def cargar_credenciales(_conn):
             "name": str(fila['Nombre']).strip(),
             "password": str(fila['Password']).strip(),  # ya viene hasheado
             "role": str(fila.get('Rol', 'conductor')).strip().lower() or "conductor",
+            # streamlit-authenticator 0.4.x espera este campo aunque no
+            # usemos recuperación de contraseña por correo; lo dejamos vacío.
+            "email": "",
         }
     return credenciales
 
@@ -106,7 +113,7 @@ def agregar_usuario(conn, nombre, username, password_plano, rol):
     if username in df['Username'].astype(str).values:
         return False, "Ese username ya existe. Elige otro."
 
-    hash_pw = stauth.Hasher([password_plano]).generate()[0]
+    hash_pw = bcrypt.hashpw(password_plano.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
     nueva_fila = {"Nombre": nombre, "Username": username, "Password": hash_pw, "Rol": rol}
     df = pd.concat([df, pd.DataFrame([nueva_fila])], ignore_index=True)
     conn.update(worksheet="Usuarios", data=df)
@@ -138,7 +145,21 @@ authenticator = stauth.Authenticate(
     st.secrets["cookie"]["expiry_days"],
 )
 
-nombre_usuario, estado_auth, username = authenticator.login("Iniciar Sesión", "main")
+# streamlit-authenticator 0.4.x ya no regresa una tupla: guarda todo
+# en st.session_state (authentication_status, name, username).
+authenticator.login(
+    location="main",
+    fields={
+        "Form name": "Iniciar Sesión",
+        "Username": "Usuario",
+        "Password": "Contraseña",
+        "Login": "Entrar",
+    },
+)
+
+estado_auth = st.session_state.get("authentication_status")
+nombre_usuario = st.session_state.get("name")
+username = st.session_state.get("username")
 
 if estado_auth is False:
     st.error("❌ Usuario o contraseña incorrectos.")
