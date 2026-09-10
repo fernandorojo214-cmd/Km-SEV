@@ -617,7 +617,12 @@ if es_admin:
                 "Selecciona un conductor:",
                 lista_usernames,
                 format_func=lambda u: etiquetas_por_usuario.get(u, u),
-                key="selector_conductor_gestion",
+                # La llave incluye la versión de caché: así, cada vez que
+                # cambias el estado de alguien, Streamlit redibuja el
+                # selector desde cero y el texto (Activo/Dado de baja)
+                # se actualiza al instante, en vez de quedarse con el
+                # texto viejo dibujado la primera vez.
+                key=f"selector_conductor_gestion_{version_usuarios()}",
             )
             activo_sel = estado_por_usuario.get(uname_sel, True)
 
