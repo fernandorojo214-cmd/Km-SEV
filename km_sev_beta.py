@@ -85,6 +85,10 @@ def cargar_credenciales(_conn):
     """Lee la hoja 'Usuarios' y arma el diccionario que necesita
     streamlit-authenticator: {usernames: {user: {name, password, role}}}"""
     df = _conn.read(worksheet="Usuarios", ttl=30)
+    # Limpiamos espacios invisibles en los encabezados (ej. "Nombre "),
+    # para que siempre matcheen con COLUMNAS_USUARIOS sin importar
+    # cómo haya quedado el Google Sheet.
+    df.columns = [str(c).strip() for c in df.columns]
     df = asegurar_columnas(df, COLUMNAS_USUARIOS)
     df = df.dropna(subset=['Username'])
 
@@ -107,18 +111,33 @@ def cargar_credenciales(_conn):
 def agregar_usuario(conn, nombre, username, password_plano, rol):
     """Usado por el admin para dar de alta un nuevo conductor.
     Hashea la contraseña antes de guardarla — nunca se guarda en texto plano."""
-    df = conn.read(worksheet="Usuarios", ttl=0)
-    df = asegurar_columnas(df, COLUMNAS_USUARIOS)
+    try:
+        df = conn.read(worksheet="Usuarios", ttl=0)
+        df = asegurar_columnas(df, COLUMNAS_USUARIOS)
 
-    if username in df['Username'].astype(str).values:
-        return False, "Ese username ya existe. Elige otro."
+        # Limpiamos nombres de columnas con espacios invisibles (la causa
+        # del bug anterior con "Nombre "), para no crear columnas duplicadas.
+        df.columns = [str(c).strip() for c in df.columns]
+        df = asegurar_columnas(df, COLUMNAS_USUARIOS)
 
-    hash_pw = bcrypt.hashpw(password_plano.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-    nueva_fila = {"Nombre": nombre, "Username": username, "Password": hash_pw, "Rol": rol}
-    df = pd.concat([df, pd.DataFrame([nueva_fila])], ignore_index=True)
-    conn.update(worksheet="Usuarios", data=df)
-    st.cache_data.clear()
-    return True, "Conductor agregado correctamente."
+        if username in df['Username'].astype(str).str.strip().values:
+            return False, "Ese username ya existe. Elige otro."
+
+        hash_pw = bcrypt.hashpw(password_plano.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+        nueva_fila = {"Nombre": nombre, "Username": username, "Password": hash_pw, "Rol": rol}
+        df = pd.concat([df, pd.DataFrame([nueva_fila])], ignore_index=True)
+
+        # Solo escribimos las 4 columnas que nos interesan, en orden fijo,
+        # para no arrastrar columnas viejas/duplicadas a la hoja.
+        df = df[COLUMNAS_USUARIOS]
+
+        conn.update(worksheet="Usuarios", data=df)
+        st.cache_data.clear()
+        return True, "Conductor agregado correctamente."
+    except Exception as e:
+        # Antes esto podía fallar en silencio o tronar toda la app.
+        # Ahora regresamos el error real para poder diagnosticarlo.
+        return False, f"❌ Error técnico al guardar: {type(e).__name__}: {e}"
 
 
 # --- ENCABEZADO ---
