@@ -597,34 +597,36 @@ if es_admin:
         if df_usuarios_actual.empty:
             st.info("Aún no hay conductores registrados.")
         else:
-            # Usamos el username como "valor" real de la selección (estable),
-            # y una etiqueta aparte solo para mostrar — así, si el estado
-            # cambia (Activo/Dado de baja) y el texto de la etiqueta cambia,
-            # no se pierde la selección ni salta a otro conductor por error.
-            etiquetas_por_usuario = {}
-            estado_por_usuario = {}
+            # IMPORTANTE: el selector solo muestra nombre + username, algo
+            # que NUNCA cambia. El estado (Activo/Dado de baja) se calcula
+            # y se muestra APARTE con st.markdown, no dentro de la opción
+            # del selector — así siempre se recalcula fresco en cada
+            # ejecución y refleja exactamente lo que dice la hoja de
+            # Google Sheets, sin depender de que el navegador redibuje
+            # el texto interno del selector (que a veces se queda viejo).
+            nombres_por_usuario = {}
             for _, fila in df_usuarios_actual.iterrows():
                 uname = str(fila['Username']).strip()
-                nombre_disp = str(fila['Nombre']).strip()
-                activo = esta_activo(fila.get('Activo'))
-                etiquetas_por_usuario[uname] = (
-                    f"{nombre_disp} ({uname}) — {'🟢 Activo' if activo else '🔴 Dado de baja'}"
-                )
-                estado_por_usuario[uname] = activo
+                nombres_por_usuario[uname] = str(fila['Nombre']).strip()
 
-            lista_usernames = list(etiquetas_por_usuario.keys())
+            lista_usernames = sorted(nombres_por_usuario.keys())
             uname_sel = st.selectbox(
                 "Selecciona un conductor:",
                 lista_usernames,
-                format_func=lambda u: etiquetas_por_usuario.get(u, u),
-                # La llave incluye la versión de caché: así, cada vez que
-                # cambias el estado de alguien, Streamlit redibuja el
-                # selector desde cero y el texto (Activo/Dado de baja)
-                # se actualiza al instante, en vez de quedarse con el
-                # texto viejo dibujado la primera vez.
-                key=f"selector_conductor_gestion_{version_usuarios()}",
+                format_func=lambda u: f"{nombres_por_usuario.get(u, u)} ({u})",
             )
-            activo_sel = estado_por_usuario.get(uname_sel, True)
+
+            # Estado leído fresco, directo de la fila actual del DataFrame
+            # recién descargado — este valor manda, siempre acorde a la hoja.
+            fila_sel = df_usuarios_actual[
+                df_usuarios_actual['Username'].astype(str).str.strip() == uname_sel
+            ].iloc[0]
+            activo_sel = esta_activo(fila_sel.get('Activo'))
+
+            if activo_sel:
+                st.markdown("**Estado actual:** 🟢 Activo")
+            else:
+                st.markdown("**Estado actual:** 🔴 Dado de baja")
 
             col_b1, col_b2 = st.columns(2)
             with col_b1:
