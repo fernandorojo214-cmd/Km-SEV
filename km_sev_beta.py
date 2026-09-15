@@ -607,6 +607,17 @@ if es_admin:
         df_usuarios_actual = leer_usuarios_fresco(conn)
         df_usuarios_actual = df_usuarios_actual.dropna(subset=['Username'])
 
+        with st.expander("🔧 Diagnóstico temporal (bórrame después)"):
+            df_crudo = conn.read(worksheet="Usuarios", ttl=0)
+            st.write("Encabezados EXACTOS tal cual vienen de Google Sheets:", list(df_crudo.columns))
+            st.write("¿Hay columnas duplicadas?", df_crudo.columns.duplicated().any())
+            for _, fila in df_crudo.iterrows():
+                st.write({
+                    "Username": fila.get('Username'),
+                    "Activo (valor crudo)": repr(fila.get('Activo')),
+                    "Activo (tipo de dato)": type(fila.get('Activo')).__name__,
+                })
+
         if df_usuarios_actual.empty:
             st.info("Aún no hay conductores registrados.")
         else:
