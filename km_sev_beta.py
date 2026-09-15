@@ -114,6 +114,19 @@ def leer_usuarios(_conn, version=0):
     return df
 
 
+def leer_usuarios_fresco(conn):
+    """Lectura SIN caché de 'Usuarios' — se usa solo en las acciones de
+    administración (dar de alta/baja, resetear contraseña), que son poco
+    frecuentes, para garantizar que SIEMPRE se vea el dato más reciente
+    de Google Sheets sin depender de ningún mecanismo de caché."""
+    df = conn.read(worksheet="Usuarios", ttl=0)
+    df.columns = [str(c).strip() for c in df.columns]
+    df = asegurar_columnas(df, COLUMNAS_USUARIOS)
+    for col in COLUMNAS_USUARIOS:
+        df[col] = df[col].astype("object")
+    return df
+
+
 def version_usuarios():
     """Contador que forzamos a subir cada vez que se guarda un cambio
     en Usuarios, para invalidar el caché de forma explícita y confiable."""
@@ -172,7 +185,7 @@ def agregar_usuario(conn, nombre, username, password_plano, rol):
     """Usado por el admin para dar de alta un nuevo conductor.
     Hashea la contraseña antes de guardarla — nunca se guarda en texto plano."""
     try:
-        df = leer_usuarios(conn, version_usuarios())
+        df = leer_usuarios_fresco(conn)
 
         if username in df['Username'].astype(str).str.strip().values:
             return False, "Ese username ya existe. Elige otro."
@@ -196,7 +209,7 @@ def cambiar_estado_usuario(conn, username, activar: bool):
     """Da de baja (o reactiva) a un conductor sin borrar su historial.
     Simplemente le apaga el acceso cambiando la columna 'Activo'."""
     try:
-        df = leer_usuarios(conn, version_usuarios())
+        df = leer_usuarios_fresco(conn)
 
         username_buscado = username.strip().lower()
         mascara = df['Username'].astype(str).str.strip().str.lower() == username_buscado
@@ -219,7 +232,7 @@ def resetear_password(conn, username, nueva_password_plano):
     """Permite al admin poner una contraseña temporal nueva a un conductor
     que la olvidó, sin necesidad de tocar el Google Sheet a mano."""
     try:
-        df = leer_usuarios(conn, version_usuarios())
+        df = leer_usuarios_fresco(conn)
 
         username_buscado = username.strip().lower()
         mascara = df['Username'].astype(str).str.strip().str.lower() == username_buscado
@@ -591,7 +604,7 @@ if es_admin:
             "pero conserva todo su historial de turnos. Puedes reactivarlo cuando quieras."
         )
 
-        df_usuarios_actual = leer_usuarios(conn, version_usuarios())
+        df_usuarios_actual = leer_usuarios_fresco(conn)
         df_usuarios_actual = df_usuarios_actual.dropna(subset=['Username'])
 
         if df_usuarios_actual.empty:
