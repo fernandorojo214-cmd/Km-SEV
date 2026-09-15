@@ -81,15 +81,34 @@ def horas_desde(fecha_str):
 
 
 def esta_activo(valor):
-    """Interpreta la columna 'Activo' de forma flexible: TRUE/Sí/1 = activo.
+    """Interpreta la columna 'Activo' de forma flexible.
+    Google Sheets puede guardar TRUE/FALSE como texto, como booleano,
+    o —si detecta automáticamente una casilla de verificación— como
+    número (1.0 / 0.0), por eso hay que cubrir todos los casos:
+    TRUE/Sí/1/1.0/Activo = activo, FALSE/No/0/0.0/Inactivo = inactivo.
     Si la celda está vacía (filas viejas antes de agregar esta columna),
     se considera activo por defecto para no bloquear a nadie sin querer."""
-    if valor is None or (isinstance(valor, float) and pd.isna(valor)):
+    if valor is None:
         return True
+    if isinstance(valor, bool):
+        return valor
+    if isinstance(valor, (int, float)):
+        if isinstance(valor, float) and pd.isna(valor):
+            return True
+        return valor != 0
+
     texto = str(valor).strip().lower()
     if texto in ("", "nan", "none"):
         return True
-    return texto in ("true", "verdadero", "si", "sí", "1", "activo")
+    if texto in ("false", "falso", "no", "inactivo", "0"):
+        return False
+    if texto in ("true", "verdadero", "si", "sí", "activo", "1"):
+        return True
+    # Cubre casos como "1.0" o "0.0" que llegan como texto
+    try:
+        return float(texto) != 0
+    except ValueError:
+        return True  # si no se reconoce el formato, no bloqueamos por defecto
 
 
 @st.cache_data(ttl=60)
@@ -191,7 +210,7 @@ def agregar_usuario(conn, nombre, username, password_plano, rol):
             return False, "Ese username ya existe. Elige otro."
 
         hash_pw = bcrypt.hashpw(password_plano.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-        nueva_fila = {"Nombre": nombre, "Username": username, "Password": hash_pw, "Rol": rol, "Activo": "TRUE"}
+        nueva_fila = {"Nombre": nombre, "Username": username, "Password": hash_pw, "Rol": rol, "Activo": "Activo"}
         df = pd.concat([df, pd.DataFrame([nueva_fila])], ignore_index=True)
 
         # Solo escribimos las 4 columnas que nos interesan, en orden fijo,
@@ -217,7 +236,7 @@ def cambiar_estado_usuario(conn, username, activar: bool):
         if not mascara.any():
             return False, "No se encontró ese conductor."
 
-        df.loc[mascara, 'Activo'] = "TRUE" if activar else "FALSE"
+        df.loc[mascara, 'Activo'] = "Activo" if activar else "Inactivo"
         df = df[COLUMNAS_USUARIOS]
         conn.update(worksheet="Usuarios", data=df)
         invalidar_cache_usuarios()
@@ -606,17 +625,6 @@ if es_admin:
 
         df_usuarios_actual = leer_usuarios_fresco(conn)
         df_usuarios_actual = df_usuarios_actual.dropna(subset=['Username'])
-
-        with st.expander("🔧 Diagnóstico temporal (bórrame después)"):
-            df_crudo = conn.read(worksheet="Usuarios", ttl=0)
-            st.write("Encabezados EXACTOS tal cual vienen de Google Sheets:", list(df_crudo.columns))
-            st.write("¿Hay columnas duplicadas?", df_crudo.columns.duplicated().any())
-            for _, fila in df_crudo.iterrows():
-                st.write({
-                    "Username": fila.get('Username'),
-                    "Activo (valor crudo)": repr(fila.get('Activo')),
-                    "Activo (tipo de dato)": type(fila.get('Activo')).__name__,
-                })
 
         if df_usuarios_actual.empty:
             st.info("Aún no hay conductores registrados.")
