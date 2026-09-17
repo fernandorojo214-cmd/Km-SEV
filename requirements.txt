@@ -7,3 +7,4 @@ google-auth
 cloudinary
 streamlit-authenticator==0.3.2
 bcrypt
+openpyxl
