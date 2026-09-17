@@ -1,15 +1,20 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 import os
 import re
 import base64
+import io
 import cloudinary
 import cloudinary.uploader
 import cloudinary.api
 import streamlit_authenticator as stauth
 import bcrypt
+import openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.formatting.rule import CellIsRule
+from openpyxl.utils import get_column_letter
 from streamlit_gsheets import GSheetsConnection
 
 # =========================================================
@@ -28,7 +33,7 @@ cloudinary.config(
     secure=True,
 )
 
-st.set_page_config(page_title="Flotilla SEV", layout="centered")
+st.set_page_config(page_title="Control de Flotilla", layout="centered")
 
 COLUMNAS_ESPERADAS = [
     'Fecha', 'Nombre', 'Kilometraje Inicial', 'Kilometraje Final',
@@ -403,8 +408,8 @@ st.markdown(f"""
   <div class="sev-banner-row">
     {logo_html}
     <div>
-      <p class="sev-banner-title">Flotilla SEV</p>
-      <p class="sev-banner-subtitle">Flotilla eléctrica SEV</p>
+      <p class="sev-banner-title">Control de Flotilla</p>
+      <p class="sev-banner-subtitle">Flotilla eléctrica SEV — turnos, kilometraje y carga</p>
     </div>
   </div>
   <div class="sev-charge-bar"></div>
@@ -651,6 +656,252 @@ with tab_historial:
             use_container_width=True, hide_index=True
         )
 
+# --- GENERADOR DEL REPORTE SEMANAL SOLARFLEET (.xlsx) ---
+NARANJA_SF = "FFE74F25"
+GRIS_CLARO_SF = "FFF2F2F2"
+BLANCO_SF = "FFFFFFFF"
+VERDE_SF = "FFC6EFCE"
+AMARILLO_SF = "FFFFEB9C"
+ROJO_SF = "FFFFC7CE"
+FUENTE_SF = "Arial"
+
+METRICAS_REPORTE = [
+    ("Ganancia en efectivo", "input_dinero"),
+    ("Ganancia en tarjeta", "input_dinero"),
+    ("Ganancia en efectivo menos carga", "calc_efectivo_menos_carga"),
+    ("Total por semana", "calc_total_semana"),
+    ("Horas solicitadas", "input_horas"),
+    ("horas conectadas", "input_horas"),
+    ("Diferencia de horas", "calc_diferencia_horas"),
+    ("Ganancia/horas conectadas", "calc_ganancia_hora"),
+    ("Bono", "input_dinero"),
+    ("Carga de energia", "input_dinero"),
+    ("Viajes por semana", "input_entero"),
+    ("Comentarios", "input_texto"),
+]
+
+
+def generar_reporte_semanal_xlsx(nombres_conductores, fecha_lunes, carga_por_conductor_dia):
+    """Genera el reporte semanal en el formato SOLARFLEET (mismo look que el
+    original, sin las referencias rotas). Prellena solo 'Carga de energia'
+    con los datos que la app ya tiene; todo lo demás (efectivo, tarjeta,
+    horas conectadas, viajes, bono) queda en blanco para llenarse a mano
+    con los datos de DiDi. Regresa los bytes del archivo .xlsx."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Rendimiento Semanal"
+
+    ws.column_dimensions['A'].width = 3
+    ws.column_dimensions['B'].width = 3
+    ws.column_dimensions['C'].width = 3
+    ws.column_dimensions['D'].width = 32
+    for col in "EFGHIJK":
+        ws.column_dimensions[col].width = 13
+    ws.column_dimensions['L'].width = 13
+    ws.column_dimensions['O'].width = 10
+    ws.column_dimensions['P'].width = 10
+    ws.column_dimensions['Q'].width = 10
+
+    thin = Side(style="thin", color="FFBFBFBF")
+    borde = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    ws.merge_cells('D2:F4')
+    c = ws['D2']
+    c.value = "SOLARFLEET"
+    c.font = Font(name="Verdana", size=30, bold=True, color=BLANCO_SF)
+    c.alignment = Alignment(horizontal="center", vertical="center")
+    for row in ws['D2:F4']:
+        for cell in row:
+            cell.fill = PatternFill("solid", fgColor=NARANJA_SF)
+
+    ws.merge_cells('O2:Q3')
+    c = ws['O2']
+    c.value = "RENDIMIENTO DRIVER"
+    c.font = Font(name=FUENTE_SF, size=12, bold=True)
+    c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    ws['O5'] = "BUENO"
+    ws['P5'] = "REGULAR"
+    ws['Q5'] = "MALO"
+    for coord, color in [('O5', VERDE_SF), ('P5', AMARILLO_SF), ('Q5', ROJO_SF)]:
+        ws[coord].font = Font(name=FUENTE_SF, bold=True, size=10)
+        ws[coord].fill = PatternFill("solid", fgColor=color)
+        ws[coord].alignment = Alignment(horizontal="center")
+
+    ws['O6'] = 100
+    ws['P6'] = 70
+    for coord in ('O6', 'P6'):
+        ws[coord].font = Font(name=FUENTE_SF, size=10)
+        ws[coord].alignment = Alignment(horizontal="center")
+    ws['O7'] = "≥ Bueno"
+    ws['P7'] = "≥ Regular"
+    ws['O7'].font = ws['P7'].font = Font(name=FUENTE_SF, size=8, italic=True, color="FF808080")
+    ws['O7'].alignment = ws['P7'].alignment = Alignment(horizontal="center")
+
+    fila_header = 6
+    ws.cell(row=fila_header, column=4, value="[Performance Driver]")
+    ws.cell(row=fila_header, column=4).font = Font(name=FUENTE_SF, bold=True, size=10, color=BLANCO_SF)
+    ws.cell(row=fila_header, column=4).fill = PatternFill("solid", fgColor=NARANJA_SF)
+
+    dias = [fecha_lunes + timedelta(days=i) for i in range(7)]
+    for i, dia in enumerate(dias):
+        col = 5 + i
+        cell = ws.cell(row=fila_header, column=col, value=dia)
+        cell.number_format = "dd/mm/yyyy"
+        cell.font = Font(name=FUENTE_SF, bold=True, size=10, color=BLANCO_SF)
+        cell.fill = PatternFill("solid", fgColor=NARANJA_SF)
+        cell.alignment = Alignment(horizontal="center")
+
+    cell = ws.cell(row=fila_header, column=12, value="TOTAL")
+    cell.font = Font(name=FUENTE_SF, bold=True, size=10, color=BLANCO_SF)
+    cell.fill = PatternFill("solid", fgColor=NARANJA_SF)
+    cell.alignment = Alignment(horizontal="center")
+
+    filas_por_bloque = 2 + len(METRICAS_REPORTE)
+    fila_actual = 8
+    rangos_semaforo = []
+
+    for driver in nombres_conductores:
+        fila_bloque_header = fila_actual
+        fila_nombre = fila_actual + 1
+        fila_metricas_inicio = fila_actual + 2
+
+        cell = ws.cell(row=fila_bloque_header, column=4, value="[Performance Driver]")
+        cell.font = Font(name=FUENTE_SF, bold=True, size=9, color=BLANCO_SF)
+        cell.fill = PatternFill("solid", fgColor=NARANJA_SF)
+        for i in range(7):
+            col = 5 + i
+            f = ws.cell(row=fila_bloque_header, column=col, value=f"={get_column_letter(col)}${fila_header}")
+            f.number_format = "dd/mm/yyyy"
+            f.font = Font(name=FUENTE_SF, size=9, color=BLANCO_SF)
+            f.fill = PatternFill("solid", fgColor=NARANJA_SF)
+            f.alignment = Alignment(horizontal="center")
+        tot = ws.cell(row=fila_bloque_header, column=12, value="TOTAL")
+        tot.font = Font(name=FUENTE_SF, bold=True, size=9, color=BLANCO_SF)
+        tot.fill = PatternFill("solid", fgColor=NARANJA_SF)
+
+        ws.merge_cells(start_row=fila_nombre, start_column=4, end_row=fila_nombre, end_column=11)
+        cell = ws.cell(row=fila_nombre, column=4, value=driver)
+        cell.font = Font(name=FUENTE_SF, bold=True, size=11)
+        for c in range(4, 13):
+            ws.cell(row=fila_nombre, column=c).fill = PatternFill("solid", fgColor=GRIS_CLARO_SF)
+
+        F = {}
+        for idx, (nombre, _) in enumerate(METRICAS_REPORTE):
+            F[nombre] = fila_metricas_inicio + idx
+
+        carga_dias = carga_por_conductor_dia.get(driver, {})
+
+        for idx, (nombre, tipo) in enumerate(METRICAS_REPORTE):
+            fila = fila_metricas_inicio + idx
+            etiqueta = ws.cell(row=fila, column=4, value=nombre)
+            etiqueta.font = Font(name=FUENTE_SF, size=10)
+            etiqueta.border = borde
+
+            for i in range(7):
+                col = 5 + i
+                col_letra = get_column_letter(col)
+                celda = ws.cell(row=fila, column=col)
+                celda.border = borde
+
+                if tipo == "input_dinero":
+                    celda.number_format = "#,##0.00"
+                    if nombre == "Carga de energia":
+                        valor_real = carga_dias.get(i)
+                        if valor_real:
+                            celda.value = round(float(valor_real), 2)
+                elif tipo == "input_horas":
+                    celda.number_format = "0"
+                    if nombre == "Horas solicitadas":
+                        celda.value = 8
+                elif tipo == "input_entero":
+                    celda.number_format = "0"
+                elif tipo == "input_texto":
+                    pass
+                elif tipo == "calc_efectivo_menos_carga":
+                    f_efectivo = F["Ganancia en efectivo"]
+                    f_carga = F["Carga de energia"]
+                    celda.value = f"=IFERROR({col_letra}{f_efectivo}-{col_letra}{f_carga},{col_letra}{f_efectivo})"
+                    celda.number_format = "#,##0.00"
+                elif tipo == "calc_total_semana":
+                    f_ef = F["Ganancia en efectivo menos carga"]
+                    f_tj = F["Ganancia en tarjeta"]
+                    celda.value = f"=SUM({col_letra}{f_ef},{col_letra}{f_tj})"
+                    celda.number_format = "#,##0.00"
+                elif tipo == "calc_diferencia_horas":
+                    f_con = F["horas conectadas"]
+                    f_sol = F["Horas solicitadas"]
+                    celda.value = f"={col_letra}{f_con}-{col_letra}{f_sol}"
+                    celda.number_format = "0"
+                elif tipo == "calc_ganancia_hora":
+                    f_tot = F["Total por semana"]
+                    f_con = F["horas conectadas"]
+                    celda.value = f"=IFERROR({col_letra}{f_tot}/{col_letra}{f_con},0)"
+                    celda.number_format = "#,##0.00"
+
+            celda_l = ws.cell(row=fila, column=12)
+            celda_l.border = borde
+            if tipo == "input_texto":
+                pass
+            elif tipo == "calc_diferencia_horas":
+                f_con = F["horas conectadas"]
+                f_sol = F["Horas solicitadas"]
+                celda_l.value = f"=L{f_con}-L{f_sol}"
+                celda_l.number_format = "0"
+            elif tipo == "calc_ganancia_hora":
+                f_tot = F["Total por semana"]
+                f_con = F["horas conectadas"]
+                celda_l.value = f"=IFERROR(L{f_tot}/L{f_con},0)"
+                celda_l.number_format = "#,##0.00"
+                rangos_semaforo.append(f"L{fila}")
+            else:
+                celda_l.value = f"=SUM(E{fila}:K{fila})"
+                celda_l.number_format = "#,##0.00" if tipo != "input_entero" else "0"
+
+        fila_actual += filas_por_bloque
+
+    if rangos_semaforo:
+        rango_semaforo = " ".join(rangos_semaforo)
+        ws.conditional_formatting.add(
+            rango_semaforo,
+            CellIsRule(operator="greaterThanOrEqual", formula=["$O$6"], fill=PatternFill("solid", fgColor=VERDE_SF)),
+        )
+        ws.conditional_formatting.add(
+            rango_semaforo,
+            CellIsRule(operator="between", formula=["$P$6", "$O$6"], fill=PatternFill("solid", fgColor=AMARILLO_SF)),
+        )
+        ws.conditional_formatting.add(
+            rango_semaforo,
+            CellIsRule(operator="lessThan", formula=["$P$6"], fill=PatternFill("solid", fgColor=ROJO_SF)),
+        )
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
+
+
+def obtener_carga_por_conductor_dia(conn, fecha_lunes):
+    """Suma 'Carga del Día' de Hoja 1 por conductor y día de la semana
+    (0=lunes..6=domingo), para prellenar el reporte semanal."""
+    df = conn.read(worksheet="Hoja 1", ttl=30)
+    if df.empty:
+        return {}
+    df['Fecha'] = pd.to_datetime(df['Fecha'], errors='coerce')
+    df = df.dropna(subset=['Fecha'])
+    fecha_domingo = fecha_lunes + timedelta(days=6)
+    df = df[(df['Fecha'].dt.date >= fecha_lunes) & (df['Fecha'].dt.date <= fecha_domingo)]
+    if df.empty:
+        return {}
+    df['Carga del Día'] = pd.to_numeric(df['Carga del Día'], errors='coerce').fillna(0)
+    df['dia_idx'] = (df['Fecha'].dt.date - fecha_lunes).apply(lambda d: d.days)
+
+    resultado = {}
+    for nombre, grupo in df.groupby(df['Nombre'].astype(str).str.strip()):
+        por_dia = grupo.groupby('dia_idx')['Carga del Día'].sum().to_dict()
+        resultado[nombre] = por_dia
+    return resultado
+
+
 # --- PESTAÑA 4: DASHBOARD ADMIN ---
 if es_admin:
     with tab_dash:
@@ -716,6 +967,49 @@ if es_admin:
                     "⬇️ Descargar reporte de esta semana (CSV)", data=csv_bytes,
                     file_name=f"reporte_flotilla_{semana_sel.replace(' ', '_')}.csv",
                     mime="text/csv", use_container_width=True,
+                )
+
+        # --- REPORTE SEMANAL SOLARFLEET (.xlsx) ---
+        st.divider()
+        st.subheader("📊 Reporte Semanal SOLARFLEET (Excel)")
+        st.caption(
+            "Genera el formato semanal de Rendimiento Driver, con los conductores activos y "
+            "las fechas ya puestas. La fila 'Carga de energía' se llena sola con los datos de "
+            "la app; el resto (efectivo, tarjeta, horas, viajes, bono) lo completas a mano con "
+            "los datos de DiDi."
+        )
+        fecha_lunes_reporte = st.date_input(
+            "Lunes de la semana a generar:",
+            value=datetime.now(zona_cdmx).date(),
+            key="fecha_lunes_reporte",
+        )
+        # Nos aseguramos de partir siempre de un lunes, sin importar qué día elija el admin.
+        fecha_lunes_reporte = fecha_lunes_reporte - timedelta(days=fecha_lunes_reporte.weekday())
+        st.caption(f"Semana del {fecha_lunes_reporte.strftime('%d/%m/%Y')} al {(fecha_lunes_reporte + timedelta(days=6)).strftime('%d/%m/%Y')}")
+
+        if st.button("📄 Generar reporte semanal", use_container_width=True):
+            df_conductores_activos = leer_usuarios_fresco(conn)
+            df_conductores_activos = df_conductores_activos.dropna(subset=['Username'])
+            nombres_activos = [
+                str(fila['Nombre']).strip()
+                for _, fila in df_conductores_activos.iterrows()
+                if esta_activo(fila.get('Activo')) and str(fila['Nombre']).strip()
+            ]
+
+            if not nombres_activos:
+                st.warning("⚠️ No hay conductores activos registrados.")
+            else:
+                with st.spinner("Generando reporte..."):
+                    carga_dia = obtener_carga_por_conductor_dia(conn, fecha_lunes_reporte)
+                    xlsx_bytes = generar_reporte_semanal_xlsx(nombres_activos, fecha_lunes_reporte, carga_dia)
+
+                st.success(f"✅ Reporte generado con {len(nombres_activos)} conductores.")
+                st.download_button(
+                    "⬇️ Descargar reporte semanal SOLARFLEET (.xlsx)",
+                    data=xlsx_bytes,
+                    file_name=f"reporte_solarfleet_{fecha_lunes_reporte.strftime('%Y%m%d')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
                 )
 
         # --- GESTIÓN DE CONDUCTORES (alta de usuarios) ---
