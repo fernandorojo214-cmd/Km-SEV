@@ -28,7 +28,7 @@ cloudinary.config(
     secure=True,
 )
 
-st.set_page_config(page_title="Control de Flotilla", layout="centered")
+st.set_page_config(page_title="Flotilla SEV", layout="centered")
 
 COLUMNAS_ESPERADAS = [
     'Fecha', 'Nombre', 'Kilometraje Inicial', 'Kilometraje Final',
@@ -403,8 +403,8 @@ st.markdown(f"""
   <div class="sev-banner-row">
     {logo_html}
     <div>
-      <p class="sev-banner-title">Control de Flotilla</p>
-      <p class="sev-banner-subtitle">Flotilla eléctrica SEV — turnos, kilometraje y carga</p>
+      <p class="sev-banner-title">Flotilla SEV</p>
+      <p class="sev-banner-subtitle">Flotilla eléctrica SEV</p>
     </div>
   </div>
   <div class="sev-charge-bar"></div>
