@@ -4,6 +4,7 @@ from datetime import datetime
 import pytz
 import os
 import re
+import base64
 import cloudinary
 import cloudinary.uploader
 import cloudinary.api
@@ -269,14 +270,146 @@ def resetear_password(conn, username, nueva_password_plano):
         return False, _mensaje_error_amigable(e)
 
 
+# --- ESTILOS Y MARCA (SEV) ---
+def inyectar_estilos():
+    """Tema visual de SEV: paleta ember/amber (energía y carga eléctrica),
+    tipografía Space Grotesk + Inter, tarjetas con acento lateral en vez
+    del típico kit de tarjetas redondeadas con sombra genérica."""
+    st.markdown("""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&display=swap');
+
+    :root {
+        --sev-ink: #1B1F24;
+        --sev-surface: #F2F3F5;
+        --sev-ember: #E8491D;
+        --sev-amber: #FFB020;
+        --sev-success: #1F9D55;
+        --sev-danger: #C81E3A;
+    }
+
+    html, body, [class*="css"] {
+        font-family: 'Inter', sans-serif;
+    }
+    h1, h2, h3, .sev-banner-title {
+        font-family: 'Space Grotesk', sans-serif !important;
+        letter-spacing: -0.01em;
+    }
+
+    /* Banner de marca */
+    .sev-banner {
+        background: var(--sev-ink);
+        border-radius: 16px;
+        padding: 26px 30px 0 30px;
+        margin-bottom: 24px;
+        overflow: hidden;
+    }
+    .sev-banner-row {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        padding-bottom: 20px;
+    }
+    .sev-banner-title {
+        color: #FAFAF8;
+        font-size: 1.8rem;
+        font-weight: 700;
+        margin: 0;
+        line-height: 1.15;
+    }
+    .sev-banner-subtitle {
+        color: #B9BEC7;
+        font-size: 0.92rem;
+        margin: 4px 0 0 0;
+    }
+    .sev-charge-bar {
+        height: 6px;
+        width: 100%;
+        background: linear-gradient(90deg, var(--sev-ember), var(--sev-amber));
+    }
+
+    /* Pestañas como control segmentado, no como pastillas */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 6px;
+        border-bottom: 2px solid var(--sev-surface);
+    }
+    .stTabs [data-baseweb="tab"] {
+        font-family: 'Space Grotesk', sans-serif;
+        font-weight: 600;
+        color: #6B7280;
+    }
+    .stTabs [aria-selected="true"] {
+        color: var(--sev-ink) !important;
+        border-bottom: 3px solid var(--sev-ember) !important;
+    }
+
+    /* Botones */
+    .stButton>button, .stFormSubmitButton>button, .stDownloadButton>button {
+        border-radius: 10px;
+        font-weight: 600;
+    }
+    .stButton>button[kind="primary"],
+    .stFormSubmitButton>button[kind="primary"],
+    .stDownloadButton>button[kind="primary"] {
+        background-color: var(--sev-ember);
+        border-color: var(--sev-ember);
+    }
+    .stButton>button[kind="primary"]:hover,
+    .stFormSubmitButton>button[kind="primary"]:hover {
+        background-color: #C93E17;
+        border-color: #C93E17;
+    }
+
+    /* Tarjetas de métricas: acento lateral, sin sombra genérica */
+    div[data-testid="stMetric"] {
+        background: var(--sev-surface);
+        border-left: 4px solid var(--sev-ember);
+        border-radius: 6px;
+        padding: 14px 16px;
+    }
+
+    /* Estados como pastilla de color, para escanear rápido */
+    .sev-pill {
+        display: inline-block;
+        padding: 3px 14px;
+        border-radius: 999px;
+        font-weight: 600;
+        font-size: 0.85rem;
+    }
+    .sev-pill-activo { background: rgba(31, 157, 85, 0.12); color: var(--sev-success); }
+    .sev-pill-inactivo { background: rgba(200, 30, 58, 0.1); color: var(--sev-danger); }
+    </style>
+    """, unsafe_allow_html=True)
+
+
+def badge_estado(activo: bool) -> str:
+    """HTML de la pastilla de estado (Activo/Dado de baja) para usar con st.markdown."""
+    if activo:
+        return '<span class="sev-pill sev-pill-activo">Activo</span>'
+    return '<span class="sev-pill sev-pill-inactivo">Dado de baja</span>'
+
+
 # --- ENCABEZADO ---
-col1, col2 = st.columns([1, 4])
-with col1:
-    if os.path.exists("logo.png"):
-        st.image("logo.png", width=200)
-with col2:
-    st.markdown("<h1 style='margin-top: 25px;'>Control de Flotilla SEV</h1>", unsafe_allow_html=True)
-st.divider()
+inyectar_estilos()
+
+logo_html = ""
+if os.path.exists("logo.png"):
+    with open("logo.png", "rb") as _f:
+        _logo_b64 = base64.b64encode(_f.read()).decode()
+    logo_html = f'<img src="data:image/png;base64,{_logo_b64}" style="height:50px;border-radius:8px;">'
+
+st.markdown(f"""
+<div class="sev-banner">
+  <div class="sev-banner-row">
+    {logo_html}
+    <div>
+      <p class="sev-banner-title">Control de Flotilla</p>
+      <p class="sev-banner-subtitle">Flotilla eléctrica SEV — turnos, kilometraje y carga</p>
+    </div>
+  </div>
+  <div class="sev-charge-bar"></div>
+</div>
+""", unsafe_allow_html=True)
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 zona_cdmx = pytz.timezone('America/Mexico_City')
@@ -656,9 +789,9 @@ if es_admin:
             activo_sel = esta_activo(fila_sel.get('Activo'))
 
             if activo_sel:
-                st.markdown("**Estado actual:** 🟢 Activo")
+                st.markdown(f"**Estado actual:** {badge_estado(True)}", unsafe_allow_html=True)
             else:
-                st.markdown("**Estado actual:** 🔴 Dado de baja")
+                st.markdown(f"**Estado actual:** {badge_estado(False)}", unsafe_allow_html=True)
 
             col_b1, col_b2 = st.columns(2)
             with col_b1:
