@@ -6,6 +6,7 @@ import os
 import re
 import base64
 import io
+import urllib.parse
 import cloudinary
 import cloudinary.uploader
 import cloudinary.api
@@ -383,6 +384,37 @@ def inyectar_estilos():
     }
     .sev-pill-activo { background: rgba(31, 157, 85, 0.12); color: var(--sev-success); }
     .sev-pill-inactivo { background: rgba(200, 30, 58, 0.1); color: var(--sev-danger); }
+
+    /* Tarjeta de estación de carga + botón "Cómo llegar" */
+    .sev-estacion-card {
+        background: var(--sev-surface);
+        border-radius: 10px;
+        padding: 14px 18px;
+        margin-bottom: 12px;
+    }
+    .sev-estacion-nombre { font-weight: 700; font-size: 1.05rem; margin: 0; }
+    .sev-estacion-direccion { color: #4B5563; font-size: 0.9rem; margin: 4px 0 10px 0; }
+    .sev-pill-red {
+        display: inline-block;
+        padding: 2px 12px;
+        border-radius: 999px;
+        font-size: 0.78rem;
+        font-weight: 700;
+        background: rgba(232, 73, 29, 0.12);
+        color: var(--sev-ember);
+        margin-bottom: 6px;
+    }
+    .sev-btn-llegar {
+        display: inline-block;
+        padding: 7px 16px;
+        background: var(--sev-ember);
+        color: #FFFFFF !important;
+        border-radius: 8px;
+        text-decoration: none !important;
+        font-weight: 600;
+        font-size: 0.88rem;
+    }
+    .sev-btn-llegar:hover { background: #C93E17; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -471,14 +503,14 @@ with st.sidebar:
     authenticator.logout("Cerrar sesión", "sidebar")
 
 # --- PESTAÑAS SEGÚN ROL ---
-nombres_tabs = ["🟢 Iniciar Turno", "🔴 Finalizar Turno", "📋 Mi Historial"]
+nombres_tabs = ["🟢 Iniciar Turno", "🔴 Finalizar Turno", "📋 Mi Historial", "🔌 Estaciones de Carga"]
 if es_admin:
     nombres_tabs.append("📊 Dashboard Admin")
 
 tabs = st.tabs(nombres_tabs)
-tab_inicio, tab_fin, tab_historial = tabs[0], tabs[1], tabs[2]
+tab_inicio, tab_fin, tab_historial, tab_estaciones = tabs[0], tabs[1], tabs[2], tabs[3]
 if es_admin:
-    tab_dash = tabs[3]
+    tab_dash = tabs[4]
 
 # El nombre ya no se pide ni se selecciona: viene de la sesión autenticada.
 # Esto elimina por completo el riesgo de escribir mal el nombre o
@@ -654,6 +686,58 @@ with tab_historial:
             propios[['Fecha', 'Kilometraje Inicial', 'Kilometraje Final', 'Total Recorrido',
                      'Carga del Día', 'Lugar de Carga', 'Comentarios']],
             use_container_width=True, hide_index=True
+        )
+
+# --- PESTAÑA: ESTACIONES DE CARGA ---
+with tab_estaciones:
+    st.header("Estaciones de Carga")
+    st.caption(
+        "Ubicaciones de referencia para cargar durante tu turno. Da clic en "
+        "'Cómo llegar' para abrir la ruta directo en Google Maps."
+    )
+
+    df_estaciones = leer_estaciones(conn)
+
+    redes_disponibles = sorted(df_estaciones['Red'].dropna().astype(str).str.strip().unique())
+    if len(redes_disponibles) > 1:
+        filtro_red = st.selectbox("Filtrar por red:", ["Todas"] + redes_disponibles)
+        if filtro_red != "Todas":
+            df_estaciones = df_estaciones[df_estaciones['Red'].astype(str).str.strip() == filtro_red]
+
+    if df_estaciones.empty:
+        st.info("Aún no hay estaciones registradas.")
+    else:
+        for _, fila in df_estaciones.iterrows():
+            nombre = str(fila.get('Nombre', '')).strip()
+            red = str(fila.get('Red', '')).strip()
+            direccion = str(fila.get('Direccion', '')).strip()
+            notas = str(fila.get('Notas', '')).strip()
+            if not nombre:
+                continue
+
+            link = link_como_llegar(direccion if direccion else nombre)
+            tiene_notas = notas and notas.lower() != "nan"
+            tiene_red = red and red.lower() != "nan"
+            notas_html = f'<p class="sev-estacion-direccion">Nota: {notas}</p>' if tiene_notas else ""
+            red_html = f'<span class="sev-pill-red">{red}</span><br>' if tiene_red else ""
+
+            tarjeta_html = (
+                '<div class="sev-estacion-card">'
+                + red_html
+                + f'<p class="sev-estacion-nombre">{nombre}</p>'
+                + f'<p class="sev-estacion-direccion">Direccion: {direccion}</p>'
+                + notas_html
+                + f'<a href="{link}" target="_blank" class="sev-btn-llegar">Como llegar</a>'
+                + '</div>'
+            )
+            st.markdown(tarjeta_html, unsafe_allow_html=True)
+
+    if es_admin:
+        st.divider()
+        st.caption(
+            "Como admin: para agregar, editar o quitar estaciones, edita la pestaña "
+            "'Estaciones' de tu Google Sheet (columnas: Nombre, Red, Direccion, Notas). "
+            "Si esa pestaña no existe todavia, creala -- mientras tanto se muestra una lista de ejemplo."
         )
 
 # --- GENERADOR DEL REPORTE SEMANAL SOLARFLEET (.xlsx) ---
@@ -900,6 +984,51 @@ def obtener_carga_por_conductor_dia(conn, fecha_lunes):
         por_dia = grupo.groupby('dia_idx')['Carga del Día'].sum().to_dict()
         resultado[nombre] = por_dia
     return resultado
+
+
+COLUMNAS_ESTACIONES = ['Nombre', 'Red', 'Direccion', 'Notas']
+
+# Datos de partida por si aún no creas la pestaña "Estaciones" en tu Google
+# Sheet, o mientras la llenas. Direcciones reales de hubs conocidos de VEMO
+# y de la red pública de CFE en CDMX (fuente: anuncios públicos de VEMO y
+# el directorio de electrolineras de CFE) — agrega/edita las que uses tú
+# directamente en la pestaña "Estaciones" del Sheet.
+ESTACIONES_SEMILLA = [
+    {"Nombre": "VEMO HUB San Pedro de los Pinos", "Red": "VEMO",
+     "Direccion": "F.C. de Cuernavaca 1454, San Pedro de los Pinos, 01180, CDMX", "Notas": "44 cargadores"},
+    {"Nombre": "Artz Pedregal", "Red": "CFE",
+     "Direccion": "Periférico Sur 3720, Jardines del Pedregal, 01900, CDMX", "Notas": ""},
+    {"Nombre": "German Center Santa Fe", "Red": "CFE",
+     "Direccion": "Av. Santa Fe 170, Zedec Santa Fe, 01219, CDMX", "Notas": "Cargadores Tesla Destination"},
+    {"Nombre": "Town Center El Rosario", "Red": "CFE",
+     "Direccion": "Av. Río Blanco 69, El Rosario, Azcapotzalco, 02100, CDMX", "Notas": ""},
+    {"Nombre": "IPADE Clavería", "Red": "CFE",
+     "Direccion": "Calle Floresta 20, Clavería, Azcapotzalco, 02080, CDMX", "Notas": ""},
+]
+
+
+@st.cache_data(ttl=300)
+def leer_estaciones(_conn):
+    """Lee la pestaña 'Estaciones' del Google Sheet. Si aún no existe,
+    usa la lista semilla para que la pestaña no se vea vacía desde el
+    primer día — crea la pestaña 'Estaciones' en tu Sheet (columnas
+    Nombre, Red, Direccion, Notas) para reemplazar/ampliar esta lista."""
+    try:
+        df = _conn.read(worksheet="Estaciones", ttl=300)
+        df.columns = [str(c).strip() for c in df.columns]
+        df = asegurar_columnas(df, COLUMNAS_ESTACIONES)
+        df = df.dropna(subset=['Nombre'])
+        if df.empty:
+            return pd.DataFrame(ESTACIONES_SEMILLA)
+        return df
+    except Exception:
+        return pd.DataFrame(ESTACIONES_SEMILLA)
+
+
+def link_como_llegar(direccion: str) -> str:
+    """Arma el enlace público de direcciones de Google Maps a partir de
+    una dirección en texto — no necesita API key ni coordenadas exactas."""
+    return f"https://www.google.com/maps/dir/?api=1&destination={urllib.parse.quote(direccion)}"
 
 
 # --- PESTAÑA 4: DASHBOARD ADMIN ---
