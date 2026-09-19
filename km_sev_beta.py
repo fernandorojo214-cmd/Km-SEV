@@ -554,7 +554,7 @@ with tab_fin:
     st.write("**Comprobante del ticket**")
     metodo_foto = st.radio(
         "¿Cómo quieres subir el comprobante?",
-        ["📷 Tomar foto ahora", "📁 Subir archivo (foto o PDF)"],
+        ["📁 Subir archivo (foto o PDF)", "📷 Tomar foto ahora"],
         horizontal=True, key="metodo_foto"
     )
     archivos_tickets = []
