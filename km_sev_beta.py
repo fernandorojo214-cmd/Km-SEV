@@ -87,6 +87,55 @@ def horas_desde(fecha_str):
         return None
 
 
+COLUMNAS_ESTACIONES = ['Nombre', 'Red', 'Direccion', 'Notas', 'Lat', 'Lng']
+
+# Datos de partida por si aún no creas la pestaña "Estaciones" en tu Google
+# Sheet, o mientras la llenas. Direcciones y coordenadas reales de hubs
+# conocidos de VEMO y de la red pública de CFE en CDMX — agrega/edita las
+# que uses tú directamente en la pestaña "Estaciones" del Sheet.
+ESTACIONES_SEMILLA = [
+    {"Nombre": "VEMO HUB San Pedro de los Pinos", "Red": "VEMO",
+     "Direccion": "F.C. de Cuernavaca 1454, San Pedro de los Pinos, 01180, CDMX", "Notas": "44 cargadores",
+     "Lat": 19.3902134, "Lng": -99.1905603},
+    {"Nombre": "Artz Pedregal", "Red": "CFE",
+     "Direccion": "Periférico Sur 3720, Jardines del Pedregal, 01900, CDMX", "Notas": "",
+     "Lat": 19.3135357, "Lng": -99.2192939},
+    {"Nombre": "German Center Santa Fe", "Red": "CFE",
+     "Direccion": "Av. Santa Fe 170, Zedec Santa Fe, 01219, CDMX", "Notas": "Cargadores Tesla Destination",
+     "Lat": 19.3666775, "Lng": -99.2607456},
+    {"Nombre": "Town Center El Rosario", "Red": "CFE",
+     "Direccion": "Av. Río Blanco 69, El Rosario, Azcapotzalco, 02100, CDMX", "Notas": "",
+     "Lat": 19.5036045, "Lng": -99.2036643},
+    {"Nombre": "IPADE Clavería", "Red": "CFE",
+     "Direccion": "Calle Floresta 20, Clavería, Azcapotzalco, 02080, CDMX", "Notas": "",
+     "Lat": 19.4639424, "Lng": -99.1871372},
+]
+
+
+@st.cache_data(ttl=300)
+def leer_estaciones(_conn):
+    """Lee la pestaña 'Estaciones' del Google Sheet. Si aún no existe,
+    usa la lista semilla para que la pestaña no se vea vacía desde el
+    primer día — crea la pestaña 'Estaciones' en tu Sheet (columnas
+    Nombre, Red, Direccion, Notas, Lat, Lng) para reemplazar/ampliar esta lista."""
+    try:
+        df = _conn.read(worksheet="Estaciones", ttl=300)
+        df.columns = [str(c).strip() for c in df.columns]
+        df = asegurar_columnas(df, COLUMNAS_ESTACIONES)
+        df = df.dropna(subset=['Nombre'])
+        if df.empty:
+            return pd.DataFrame(ESTACIONES_SEMILLA)
+        return df
+    except Exception:
+        return pd.DataFrame(ESTACIONES_SEMILLA)
+
+
+def link_como_llegar(direccion: str) -> str:
+    """Arma el enlace público de direcciones de Google Maps a partir de
+    una dirección en texto — no necesita API key ni coordenadas exactas."""
+    return f"https://www.google.com/maps/dir/?api=1&destination={urllib.parse.quote(direccion)}"
+
+
 def esta_activo(valor):
     """Interpreta la columna 'Activo' de forma flexible.
     Google Sheets puede guardar TRUE/FALSE como texto, como booleano,
@@ -1009,55 +1058,6 @@ def obtener_carga_por_conductor_dia(conn, fecha_lunes):
         por_dia = grupo.groupby('dia_idx')['Carga del Día'].sum().to_dict()
         resultado[nombre] = por_dia
     return resultado
-
-
-COLUMNAS_ESTACIONES = ['Nombre', 'Red', 'Direccion', 'Notas', 'Lat', 'Lng']
-
-# Datos de partida por si aún no creas la pestaña "Estaciones" en tu Google
-# Sheet, o mientras la llenas. Direcciones y coordenadas reales de hubs
-# conocidos de VEMO y de la red pública de CFE en CDMX — agrega/edita las
-# que uses tú directamente en la pestaña "Estaciones" del Sheet.
-ESTACIONES_SEMILLA = [
-    {"Nombre": "VEMO HUB San Pedro de los Pinos", "Red": "VEMO",
-     "Direccion": "F.C. de Cuernavaca 1454, San Pedro de los Pinos, 01180, CDMX", "Notas": "44 cargadores",
-     "Lat": 19.3902134, "Lng": -99.1905603},
-    {"Nombre": "Artz Pedregal", "Red": "CFE",
-     "Direccion": "Periférico Sur 3720, Jardines del Pedregal, 01900, CDMX", "Notas": "",
-     "Lat": 19.3135357, "Lng": -99.2192939},
-    {"Nombre": "German Center Santa Fe", "Red": "CFE",
-     "Direccion": "Av. Santa Fe 170, Zedec Santa Fe, 01219, CDMX", "Notas": "Cargadores Tesla Destination",
-     "Lat": 19.3666775, "Lng": -99.2607456},
-    {"Nombre": "Town Center El Rosario", "Red": "CFE",
-     "Direccion": "Av. Río Blanco 69, El Rosario, Azcapotzalco, 02100, CDMX", "Notas": "",
-     "Lat": 19.5036045, "Lng": -99.2036643},
-    {"Nombre": "IPADE Clavería", "Red": "CFE",
-     "Direccion": "Calle Floresta 20, Clavería, Azcapotzalco, 02080, CDMX", "Notas": "",
-     "Lat": 19.4639424, "Lng": -99.1871372},
-]
-
-
-@st.cache_data(ttl=300)
-def leer_estaciones(_conn):
-    """Lee la pestaña 'Estaciones' del Google Sheet. Si aún no existe,
-    usa la lista semilla para que la pestaña no se vea vacía desde el
-    primer día — crea la pestaña 'Estaciones' en tu Sheet (columnas
-    Nombre, Red, Direccion, Notas) para reemplazar/ampliar esta lista."""
-    try:
-        df = _conn.read(worksheet="Estaciones", ttl=300)
-        df.columns = [str(c).strip() for c in df.columns]
-        df = asegurar_columnas(df, COLUMNAS_ESTACIONES)
-        df = df.dropna(subset=['Nombre'])
-        if df.empty:
-            return pd.DataFrame(ESTACIONES_SEMILLA)
-        return df
-    except Exception:
-        return pd.DataFrame(ESTACIONES_SEMILLA)
-
-
-def link_como_llegar(direccion: str) -> str:
-    """Arma el enlace público de direcciones de Google Maps a partir de
-    una dirección en texto — no necesita API key ni coordenadas exactas."""
-    return f"https://www.google.com/maps/dir/?api=1&destination={urllib.parse.quote(direccion)}"
 
 
 # --- PESTAÑA 4: DASHBOARD ADMIN ---
