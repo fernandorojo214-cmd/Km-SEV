@@ -707,6 +707,28 @@ with tab_estaciones:
     if df_estaciones.empty:
         st.info("Aún no hay estaciones registradas.")
     else:
+        # --- Mapa con pines, solo para las estaciones que sí tienen Lat/Lng ---
+        mapa_df = df_estaciones.copy()
+        mapa_df['Lat'] = pd.to_numeric(mapa_df.get('Lat'), errors='coerce')
+        mapa_df['Lng'] = pd.to_numeric(mapa_df.get('Lng'), errors='coerce')
+        mapa_df = mapa_df.dropna(subset=['Lat', 'Lng'])
+        mapa_df = mapa_df[(mapa_df['Lat'] != 0) & (mapa_df['Lng'] != 0)]
+
+        if not mapa_df.empty:
+            st.map(mapa_df.rename(columns={'Lat': 'lat', 'Lng': 'lon'})[['lat', 'lon']], size=60, color="#E8491D")
+            faltan = len(df_estaciones) - len(mapa_df)
+            if faltan > 0:
+                st.caption(
+                    f"📍 Mostrando {len(mapa_df)} de {len(df_estaciones)} estaciones en el mapa "
+                    f"({faltan} sin coordenadas todavía — agrega Lat/Lng en el Sheet para que aparezcan)."
+                )
+        else:
+            st.caption(
+                "💡 Agrega columnas 'Lat' y 'Lng' en tu pestaña 'Estaciones' para ver el mapa con pines "
+                "(clic derecho en el punto exacto dentro de Google Maps → copiar las coordenadas)."
+            )
+
+        st.divider()
         for _, fila in df_estaciones.iterrows():
             nombre = str(fila.get('Nombre', '')).strip()
             red = str(fila.get('Red', '')).strip()
@@ -736,8 +758,11 @@ with tab_estaciones:
         st.divider()
         st.caption(
             "Como admin: para agregar, editar o quitar estaciones, edita la pestaña "
-            "'Estaciones' de tu Google Sheet (columnas: Nombre, Red, Direccion, Notas). "
-            "Si esa pestaña no existe todavia, creala -- mientras tanto se muestra una lista de ejemplo."
+            "'Estaciones' de tu Google Sheet (columnas: Nombre, Red, Direccion, Notas, Lat, Lng). "
+            "Lat/Lng son opcionales (solo hacen falta para que aparezca el pin en el mapa) — "
+            "se consiguen dando clic derecho sobre el punto exacto en Google Maps y copiando las "
+            "coordenadas. Si esa pestaña no existe todavia, creala -- mientras tanto se muestra "
+            "una lista de ejemplo."
         )
 
 # --- GENERADOR DEL REPORTE SEMANAL SOLARFLEET (.xlsx) ---
@@ -986,24 +1011,28 @@ def obtener_carga_por_conductor_dia(conn, fecha_lunes):
     return resultado
 
 
-COLUMNAS_ESTACIONES = ['Nombre', 'Red', 'Direccion', 'Notas']
+COLUMNAS_ESTACIONES = ['Nombre', 'Red', 'Direccion', 'Notas', 'Lat', 'Lng']
 
 # Datos de partida por si aún no creas la pestaña "Estaciones" en tu Google
-# Sheet, o mientras la llenas. Direcciones reales de hubs conocidos de VEMO
-# y de la red pública de CFE en CDMX (fuente: anuncios públicos de VEMO y
-# el directorio de electrolineras de CFE) — agrega/edita las que uses tú
-# directamente en la pestaña "Estaciones" del Sheet.
+# Sheet, o mientras la llenas. Direcciones y coordenadas reales de hubs
+# conocidos de VEMO y de la red pública de CFE en CDMX — agrega/edita las
+# que uses tú directamente en la pestaña "Estaciones" del Sheet.
 ESTACIONES_SEMILLA = [
     {"Nombre": "VEMO HUB San Pedro de los Pinos", "Red": "VEMO",
-     "Direccion": "F.C. de Cuernavaca 1454, San Pedro de los Pinos, 01180, CDMX", "Notas": "44 cargadores"},
+     "Direccion": "F.C. de Cuernavaca 1454, San Pedro de los Pinos, 01180, CDMX", "Notas": "44 cargadores",
+     "Lat": 19.3902134, "Lng": -99.1905603},
     {"Nombre": "Artz Pedregal", "Red": "CFE",
-     "Direccion": "Periférico Sur 3720, Jardines del Pedregal, 01900, CDMX", "Notas": ""},
+     "Direccion": "Periférico Sur 3720, Jardines del Pedregal, 01900, CDMX", "Notas": "",
+     "Lat": 19.3135357, "Lng": -99.2192939},
     {"Nombre": "German Center Santa Fe", "Red": "CFE",
-     "Direccion": "Av. Santa Fe 170, Zedec Santa Fe, 01219, CDMX", "Notas": "Cargadores Tesla Destination"},
+     "Direccion": "Av. Santa Fe 170, Zedec Santa Fe, 01219, CDMX", "Notas": "Cargadores Tesla Destination",
+     "Lat": 19.3666775, "Lng": -99.2607456},
     {"Nombre": "Town Center El Rosario", "Red": "CFE",
-     "Direccion": "Av. Río Blanco 69, El Rosario, Azcapotzalco, 02100, CDMX", "Notas": ""},
+     "Direccion": "Av. Río Blanco 69, El Rosario, Azcapotzalco, 02100, CDMX", "Notas": "",
+     "Lat": 19.5036045, "Lng": -99.2036643},
     {"Nombre": "IPADE Clavería", "Red": "CFE",
-     "Direccion": "Calle Floresta 20, Clavería, Azcapotzalco, 02080, CDMX", "Notas": ""},
+     "Direccion": "Calle Floresta 20, Clavería, Azcapotzalco, 02080, CDMX", "Notas": "",
+     "Lat": 19.4639424, "Lng": -99.1871372},
 ]
 
 
