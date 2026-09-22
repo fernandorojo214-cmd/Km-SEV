@@ -81,9 +81,12 @@ def horas_desde(fecha_str):
     try:
         zona_cdmx = pytz.timezone('America/Mexico_City')
         f = pd.to_datetime(fecha_str)
+        if pd.isna(f):
+            return None  # Fecha vacía/inválida (NaT) — no truena, simplemente no hay dato
         if f.tzinfo is None:
             f = zona_cdmx.localize(f)
-        return (datetime.now(zona_cdmx) - f).total_seconds() / 3600
+        resultado = (datetime.now(zona_cdmx) - f).total_seconds() / 3600
+        return None if pd.isna(resultado) else resultado
     except Exception:
         return None
 
