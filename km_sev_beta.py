@@ -556,12 +556,14 @@ with st.sidebar:
 # --- PESTAÑAS SEGÚN ROL ---
 nombres_tabs = ["🟢 Iniciar Turno", "🔴 Finalizar Turno", "📋 Mi Historial", "🔌 Estaciones de Carga"]
 if es_admin:
+    nombres_tabs.append("🟢 En Vivo")
     nombres_tabs.append("📊 Dashboard Admin")
 
 tabs = st.tabs(nombres_tabs)
 tab_inicio, tab_fin, tab_historial, tab_estaciones = tabs[0], tabs[1], tabs[2], tabs[3]
 if es_admin:
-    tab_dash = tabs[4]
+    tab_en_vivo = tabs[4]
+    tab_dash = tabs[5]
 
 # El nombre ya no se pide ni se selecciona: viene de la sesión autenticada.
 # Esto elimina por completo el riesgo de escribir mal el nombre o
@@ -849,6 +851,101 @@ with tab_estaciones:
             "una lista de ejemplo."
         )
 
+# --- PESTAÑA: EN VIVO (SOLO ADMIN) ---
+if es_admin:
+    with tab_en_vivo:
+        st.header("🟢 Conductores en Turno Ahora")
+        st.caption(
+            "Quién está activo en este momento y cuántas horas lleva desde que "
+            "inició turno. Esta pestaña se actualiza sola cada minuto."
+        )
+
+        # La página se vuelve a ejecutar sola cada 60 segundos gracias a
+        # st_autorefresh, así que las horas suben solas en pantalla sin que
+        # el admin tenga que refrescar manualmente. Se usa ttl=30 (no
+        # ttl=0) para no golpear la API de Google Sheets con una solicitud
+        # nueva cada minuto sin necesidad.
+        st_autorefresh(interval=60_000, key="autorefresh_en_vivo")
+
+        df_en_vivo = conn.read(worksheet="Hoja 1", ttl=30)
+        df_en_vivo = asegurar_columnas(df_en_vivo, COLUMNAS_ESPERADAS)
+        df_en_vivo = df_en_vivo[
+            pd.isna(df_en_vivo['Kilometraje Final']) | (df_en_vivo['Kilometraje Final'] == "")
+        ].copy()
+        df_en_vivo['Fecha'] = pd.to_datetime(df_en_vivo['Fecha'], errors='coerce')
+
+        # Solo turnos abiertos DENTRO de la semana actual (lunes-domingo,
+        # hora CDMX) cuentan como "activos ahora". Un turno que quedó
+        # abierto desde hace semanas o meses casi siempre es un error de
+        # captura (el conductor olvidó dar "Finalizar Turno"), no un turno
+        # real en curso, así que no debe mezclarse aquí ni inflar la lista.
+        hoy_cdmx = datetime.now(zona_cdmx).date()
+        inicio_semana_actual = hoy_cdmx - timedelta(days=hoy_cdmx.weekday())
+
+        df_antiguos = df_en_vivo[
+            df_en_vivo['Fecha'].notna() & (df_en_vivo['Fecha'].dt.date < inicio_semana_actual)
+        ].copy()
+        df_en_vivo = df_en_vivo[
+            df_en_vivo['Fecha'].isna() | (df_en_vivo['Fecha'].dt.date >= inicio_semana_actual)
+        ].copy()
+
+        if df_en_vivo.empty:
+            st.info("No hay conductores en turno esta semana.")
+        else:
+            df_en_vivo['Horas Activo'] = df_en_vivo['Fecha'].apply(horas_desde)
+            df_en_vivo = df_en_vivo.sort_values('Horas Activo', ascending=False, na_position='last')
+
+            st.metric("Conductores activos esta semana", len(df_en_vivo))
+            st.divider()
+
+            for _, fila in df_en_vivo.iterrows():
+                nombre_activo = str(fila.get('Nombre', '')).strip()
+                fecha_inicio_turno = fila.get('Fecha', '')
+                km_inicio_turno = fila.get('Kilometraje Inicial', '')
+                horas_turno = fila.get('Horas Activo')
+
+                if horas_turno is None:
+                    texto_horas = "N/D"
+                    clase_pill = "sev-pill-activo"
+                else:
+                    texto_horas = f"{horas_turno:.1f} h"
+                    if horas_turno < 8:
+                        clase_pill = "sev-pill-activo"
+                    elif horas_turno < 12:
+                        clase_pill = "sev-pill-amarillo"
+                    else:
+                        clase_pill = "sev-pill-inactivo"
+
+                tarjeta_en_vivo_html = (
+                    '<div class="sev-estacion-card">'
+                    f'<p class="sev-estacion-nombre">{nombre_activo} '
+                    f'<span class="sev-pill {clase_pill}">⏱ {texto_horas}</span></p>'
+                    f'<p class="sev-estacion-direccion">Inicio de turno: {fecha_inicio_turno} '
+                    f'| Km inicial: {km_inicio_turno}</p>'
+                    '</div>'
+                )
+                st.markdown(tarjeta_en_vivo_html, unsafe_allow_html=True)
+
+            st.caption("🟢 < 8 h  ·  🟡 8-12 h  ·  🔴 > 12 h")
+
+        # --- Aviso aparte para turnos abiertos de semanas anteriores ---
+        # No se muestran como "activos" (ya no son de esta semana), pero
+        # tampoco se ocultan del todo: siguen bloqueando a ese conductor
+        # para iniciar un turno nuevo, así que el admin necesita saber
+        # que existen para corregirlos manualmente en el Google Sheet
+        # (poniéndoles un Kilometraje Final).
+        if not df_antiguos.empty:
+            st.divider()
+            with st.expander(f"⚠️ {len(df_antiguos)} turno(s) sin cerrar de semanas anteriores"):
+                st.caption(
+                    "Estos turnos probablemente quedaron abiertos por error (el conductor "
+                    "olvidó dar 'Finalizar Turno'). Mientras sigan así, ese conductor no podrá "
+                    "iniciar un turno nuevo. Corrígelos poniéndoles un 'Kilometraje Final' "
+                    "directamente en la pestaña 'Hoja 1' de tu Google Sheet."
+                )
+                df_antiguos_mostrar = df_antiguos[['Fecha', 'Nombre', 'Kilometraje Inicial']].sort_values('Fecha')
+                st.dataframe(df_antiguos_mostrar, use_container_width=True, hide_index=True)
+
 # --- GENERADOR DEL REPORTE SEMANAL SOLARFLEET (.xlsx) ---
 NARANJA_SF = "FFE74F25"
 GRIS_CLARO_SF = "FFF2F2F2"
@@ -1099,63 +1196,6 @@ def obtener_carga_por_conductor_dia(conn, fecha_lunes):
 if es_admin:
     with tab_dash:
         st.header("Análisis de Operación y Carga")
-
-        # --- CONDUCTORES EN TURNO AHORA (EN VIVO) ---
-        # La página del Dashboard se vuelve a ejecutar sola cada 60 segundos
-        # gracias a st_autorefresh, así que las horas de cada turno activo
-        # suben solas en pantalla sin que el admin tenga que tocar nada.
-        # Se usa ttl=30 (no ttl=0) para no golpear la API de Google Sheets
-        # con una solicitud nueva cada minuto sin necesidad.
-        st_autorefresh(interval=60_000, key="autorefresh_dashboard")
-
-        st.subheader("🟢 Conductores en Turno Ahora")
-
-        df_en_vivo = conn.read(worksheet="Hoja 1", ttl=30)
-        df_en_vivo = asegurar_columnas(df_en_vivo, COLUMNAS_ESPERADAS)
-        df_en_vivo = df_en_vivo[
-            pd.isna(df_en_vivo['Kilometraje Final']) | (df_en_vivo['Kilometraje Final'] == "")
-        ].copy()
-
-        if df_en_vivo.empty:
-            st.info("No hay conductores en turno en este momento.")
-        else:
-            df_en_vivo['Horas Activo'] = df_en_vivo['Fecha'].apply(horas_desde)
-            df_en_vivo = df_en_vivo.sort_values('Horas Activo', ascending=False, na_position='last')
-
-            st.metric("Conductores activos ahora", len(df_en_vivo))
-
-            for _, fila in df_en_vivo.iterrows():
-                nombre_activo = str(fila.get('Nombre', '')).strip()
-                fecha_inicio_turno = fila.get('Fecha', '')
-                km_inicio_turno = fila.get('Kilometraje Inicial', '')
-                horas_turno = fila.get('Horas Activo')
-
-                if horas_turno is None:
-                    texto_horas = "N/D"
-                    clase_pill = "sev-pill-activo"
-                else:
-                    texto_horas = f"{horas_turno:.1f} h"
-                    if horas_turno < 8:
-                        clase_pill = "sev-pill-activo"
-                    elif horas_turno < 12:
-                        clase_pill = "sev-pill-amarillo"
-                    else:
-                        clase_pill = "sev-pill-inactivo"
-
-                tarjeta_en_vivo_html = (
-                    '<div class="sev-estacion-card">'
-                    f'<p class="sev-estacion-nombre">{nombre_activo} '
-                    f'<span class="sev-pill {clase_pill}">⏱ {texto_horas}</span></p>'
-                    f'<p class="sev-estacion-direccion">Inicio de turno: {fecha_inicio_turno} '
-                    f'| Km inicial: {km_inicio_turno}</p>'
-                    '</div>'
-                )
-                st.markdown(tarjeta_en_vivo_html, unsafe_allow_html=True)
-
-            st.caption("🟢 < 8 h  ·  🟡 8-12 h  ·  🔴 > 12 h — Se actualiza solo cada minuto.")
-
-        st.divider()
-
         df_dash = conn.read(worksheet="Hoja 1", ttl=0)
         df_dash = asegurar_columnas(df_dash, COLUMNAS_ESPERADAS)
 
