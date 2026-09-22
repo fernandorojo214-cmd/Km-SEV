@@ -907,7 +907,7 @@ if es_admin:
                 km_inicio_turno = fila.get('Kilometraje Inicial', '')
                 horas_turno = fila.get('Horas Activo')
 
-                if horas_turno is None:
+                if horas_turno is None or pd.isna(horas_turno):
                     texto_horas = "N/D"
                     clase_pill = "sev-pill-activo"
                 else:
