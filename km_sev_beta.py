@@ -868,7 +868,7 @@ if es_admin:
         # el admin tenga que refrescar manualmente. Se usa ttl=30 (no
         # ttl=0) para no golpear la API de Google Sheets con una solicitud
         # nueva cada minuto sin necesidad.
-        st_autorefresh(interval=60_000, key="autorefresh_en_vivo")
+        st_autorefresh(interval=240_000, key="autorefresh_en_vivo")
 
         df_en_vivo = conn.read(worksheet="Hoja 1", ttl=30)
         df_en_vivo = asegurar_columnas(df_en_vivo, COLUMNAS_ESPERADAS)
