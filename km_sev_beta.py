@@ -713,6 +713,8 @@ with tab_historial:
         propios['Fecha'] = pd.to_datetime(propios['Fecha'], errors='coerce')
         propios = propios.sort_values('Fecha', ascending=False)
 
+        # Aviso de turno abierto (se calcula sobre TODO el historial,
+        # sin importar el filtro de fechas, para no ocultarlo por error)
         turno_pendiente = propios[pd.isna(propios['Kilometraje Final']) | (propios['Kilometraje Final'] == "")]
         if not turno_pendiente.empty:
             fila = turno_pendiente.iloc[0]
@@ -722,20 +724,51 @@ with tab_historial:
                 aviso += f" (hace {horas:.1f} horas)"
             (st.warning if (horas or 0) > 12 else st.info)(aviso)
 
-        total_km = pd.to_numeric(propios['Total Recorrido'], errors='coerce').fillna(0).sum()
-        total_gasto = pd.to_numeric(propios['Carga del Día'], errors='coerce').fillna(0).sum()
+        # --- Filtro por rango de fechas (igual estilo que el reporte semanal) ---
+        fechas_validas = propios['Fecha'].dropna()
+        fecha_min_disponible = fechas_validas.min().date() if not fechas_validas.empty else datetime.now(zona_cdmx).date()
+        fecha_max_disponible = fechas_validas.max().date() if not fechas_validas.empty else datetime.now(zona_cdmx).date()
+
+        col_fi, col_ff = st.columns(2)
+        with col_fi:
+            fecha_inicio_hist = st.date_input(
+                "Desde:", value=fecha_min_disponible,
+                min_value=fecha_min_disponible, max_value=fecha_max_disponible,
+                key="hist_fecha_inicio"
+            )
+        with col_ff:
+            fecha_fin_hist = st.date_input(
+                "Hasta:", value=fecha_max_disponible,
+                min_value=fecha_min_disponible, max_value=fecha_max_disponible,
+                key="hist_fecha_fin"
+            )
+
+        if fecha_inicio_hist > fecha_fin_hist:
+            st.error("❌ La fecha 'Desde' no puede ser posterior a la fecha 'Hasta'.")
+            propios_filtrado = propios.iloc[0:0]  # tabla vacía
+        else:
+            propios_filtrado = propios[
+                (propios['Fecha'].dt.date >= fecha_inicio_hist) &
+                (propios['Fecha'].dt.date <= fecha_fin_hist)
+            ]
+
+        total_km = pd.to_numeric(propios_filtrado['Total Recorrido'], errors='coerce').fillna(0).sum()
+        total_gasto = pd.to_numeric(propios_filtrado['Carga del Día'], errors='coerce').fillna(0).sum()
 
         m1, m2, m3 = st.columns(3)
-        m1.metric("Turnos registrados", len(propios))
+        m1.metric("Turnos registrados", len(propios_filtrado))
         m2.metric("KM totales", f"{total_km:,.1f} km")
         m3.metric("Gasto total en carga", f"${total_gasto:,.2f}")
 
         st.divider()
-        st.dataframe(
-            propios[['Fecha', 'Kilometraje Inicial', 'Kilometraje Final', 'Total Recorrido',
-                     'Carga del Día', 'Lugar de Carga', 'Comentarios']],
-            use_container_width=True, hide_index=True
-        )
+        if propios_filtrado.empty:
+            st.info("No hay turnos registrados en el rango de fechas seleccionado.")
+        else:
+            st.dataframe(
+                propios_filtrado[['Fecha', 'Kilometraje Inicial', 'Kilometraje Final', 'Total Recorrido',
+                                   'Carga del Día', 'Lugar de Carga', 'Comentarios']],
+                use_container_width=True, hide_index=True
+            )
 
 # --- PESTAÑA: ESTACIONES DE CARGA ---
 with tab_estaciones:
