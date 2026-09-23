@@ -329,6 +329,55 @@ def resetear_password(conn, username, nueva_password_plano):
         return False, _mensaje_error_amigable(e)
 
 
+def cerrar_turno_antiguo(conn, nombre, fecha_inicio_turno, km_final, comentario_cierre):
+    """Permite al admin cerrar manualmente, desde la app, un turno viejo
+    que quedó abierto por error (el conductor olvidó dar 'Finalizar
+    Turno'). El turno se identifica por Nombre + fecha/hora EXACTA de
+    inicio (no por su posición/índice en la hoja), para evitar cerrar la
+    fila equivocada si el Google Sheet cambió entre que se mostró la
+    lista y que el admin dio clic en 'Cerrar turno'. Deja una nota en
+    Comentarios para que quede registro de que fue un cierre
+    administrativo y no el cierre normal que hace el propio conductor."""
+    try:
+        df = conn.read(worksheet="Hoja 1", ttl=0)
+        df = asegurar_columnas(df, COLUMNAS_ESPERADAS)
+        for col in ['Carga del Día', 'Lugar de Carga', 'Comentarios', 'Comprobante']:
+            df[col] = df[col].astype("object")
+
+        fecha_parseada = pd.to_datetime(df['Fecha'], errors='coerce')
+        mascara = (
+            (df['Nombre'].astype(str).str.strip().str.lower() == nombre.strip().lower()) &
+            (fecha_parseada == fecha_inicio_turno) &
+            (pd.isna(df['Kilometraje Final']) | (df['Kilometraje Final'] == ""))
+        )
+
+        if not mascara.any():
+            return False, "No se encontró ese turno (es posible que ya se haya cerrado o que los datos hayan cambiado). Refresca la pestaña."
+        if mascara.sum() > 1:
+            return False, "Se encontró más de un turno idéntico; ciérralo manualmente en el Google Sheet para evitar errores."
+
+        idx = df[mascara].index[0]
+        km_ini = float(df.at[idx, 'Kilometraje Inicial'])
+        if km_final < km_ini:
+            return False, f"El kilometraje final ({km_final}) no puede ser menor al inicial ({km_ini})."
+
+        df.at[idx, 'Kilometraje Final'] = float(km_final)
+        df.at[idx, 'Total Recorrido'] = float(km_final - km_ini)
+
+        nota = "[Cerrado manualmente por admin]"
+        if comentario_cierre:
+            nota += f" {comentario_cierre.strip()}"
+        comentario_actual = df.at[idx, 'Comentarios']
+        comentario_actual = str(comentario_actual).strip() if comentario_actual and str(comentario_actual).lower() != "nan" else ""
+        df.at[idx, 'Comentarios'] = (comentario_actual + " " + nota).strip()
+
+        conn.update(worksheet="Hoja 1", data=df)
+        st.cache_data.clear()
+        return True, f"Turno de {nombre} cerrado correctamente."
+    except Exception as e:
+        return False, _mensaje_error_amigable(e)
+
+
 # --- ESTILOS Y MARCA (SEV) ---
 def inyectar_estilos():
     """Tema visual de SEV: paleta ember/amber (energía y carga eléctrica),
@@ -868,7 +917,7 @@ if es_admin:
         # el admin tenga que refrescar manualmente. Se usa ttl=30 (no
         # ttl=0) para no golpear la API de Google Sheets con una solicitud
         # nueva cada minuto sin necesidad.
-        st_autorefresh(interval=240_000, key="autorefresh_en_vivo")
+        st_autorefresh(interval=60_000, key="autorefresh_en_vivo")
 
         df_en_vivo = conn.read(worksheet="Hoja 1", ttl=30)
         df_en_vivo = asegurar_columnas(df_en_vivo, COLUMNAS_ESPERADAS)
@@ -939,15 +988,48 @@ if es_admin:
         # (poniéndoles un Kilometraje Final).
         if not df_antiguos.empty:
             st.divider()
-            with st.expander(f"⚠️ {len(df_antiguos)} turno(s) sin cerrar de semanas anteriores"):
+            with st.expander(f"⚠️ {len(df_antiguos)} turno(s) sin cerrar de semanas anteriores", expanded=False):
                 st.caption(
                     "Estos turnos probablemente quedaron abiertos por error (el conductor "
                     "olvidó dar 'Finalizar Turno'). Mientras sigan así, ese conductor no podrá "
-                    "iniciar un turno nuevo. Corrígelos poniéndoles un 'Kilometraje Final' "
-                    "directamente en la pestaña 'Hoja 1' de tu Google Sheet."
+                    "iniciar un turno nuevo. Puedes cerrarlos aquí mismo poniéndoles un "
+                    "Kilometraje Final, sin entrar al Google Sheet."
                 )
-                df_antiguos_mostrar = df_antiguos[['Fecha', 'Nombre', 'Kilometraje Inicial']].sort_values('Fecha')
-                st.dataframe(df_antiguos_mostrar, use_container_width=True, hide_index=True)
+                df_antiguos_ordenado = df_antiguos.sort_values('Fecha')
+
+                for _, fila_vieja in df_antiguos_ordenado.iterrows():
+                    nombre_viejo = str(fila_vieja.get('Nombre', '')).strip()
+                    fecha_vieja = fila_vieja.get('Fecha')
+                    km_ini_viejo = fila_vieja.get('Kilometraje Inicial', '')
+                    # key única por fila: nombre + fecha en segundos, para que cada
+                    # widget de la lista tenga su propio estado independiente
+                    key_sufijo = f"{nombre_viejo}_{fecha_vieja}".replace(" ", "_").replace(":", "").replace("-", "")
+
+                    st.markdown(f"**{nombre_viejo}** — inicio: {fecha_vieja} — Km inicial: {km_ini_viejo}")
+                    col_km, col_coment, col_btn = st.columns([1, 2, 1])
+                    with col_km:
+                        km_final_viejo = st.number_input(
+                            "Kilometraje Final", min_value=0.0, step=0.1, value=None,
+                            placeholder="Km final", key=f"cierre_km_{key_sufijo}",
+                            label_visibility="collapsed"
+                        )
+                    with col_coment:
+                        nota_cierre = st.text_input(
+                            "Nota", placeholder="Nota (opcional)",
+                            key=f"cierre_nota_{key_sufijo}", label_visibility="collapsed"
+                        )
+                    with col_btn:
+                        if st.button("🔒 Cerrar turno", key=f"cierre_btn_{key_sufijo}", use_container_width=True):
+                            if km_final_viejo is None:
+                                st.warning("⚠️ Ingresa el kilometraje final antes de cerrar.")
+                            else:
+                                ok, mensaje = cerrar_turno_antiguo(
+                                    conn, nombre_viejo, fecha_vieja, km_final_viejo, nota_cierre
+                                )
+                                (st.success if ok else st.error)(mensaje)
+                                if ok:
+                                    st.rerun()
+                    st.divider()
 
 # --- GENERADOR DEL REPORTE SEMANAL SOLARFLEET (.xlsx) ---
 NARANJA_SF = "FFE74F25"
