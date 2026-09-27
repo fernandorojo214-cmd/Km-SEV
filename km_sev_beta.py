@@ -27,6 +27,13 @@ from streamlit_autorefresh import st_autorefresh
 # que tengas instalada localmente (ver diagnostico_auth.py). Este código
 # usa la API de la rama 0.4.x (login basado en st.session_state, sin la
 # clase Hasher — el hash de contraseñas se hace con bcrypt directamente).
+#
+# OPCIONAL — Lectura de tickets con IA (desactivada por defecto):
+# si más adelante se agrega un bloque [anthropic] con api_key en
+# Secrets, se activa sola la lectura automática del monto del ticket
+# en la pestaña "Finalizar Turno" (ver clave_ia_configurada() más abajo
+# para instrucciones detalladas). Mientras no exista esa clave, esta
+# función no hace nada y el resto de la app funciona exactamente igual.
 
 cloudinary.config(
     cloud_name=st.secrets["cloudinary"]["cloud_name"],
@@ -68,6 +75,107 @@ def extraer_datos_cloudinary(url):
 def calcular_total_carga(texto):
     numeros = re.findall(r"[-+]?\d*\.\d+|\d+", texto or "")
     return sum(float(n) for n in numeros) if numeros else 0.0
+
+
+# --- LECTURA DE TICKETS CON IA (OPCIONAL, DESACTIVADA POR DEFECTO) ---
+# Esta función usa la API de Claude (Anthropic) para leer el monto total
+# impreso en la foto de un ticket de carga y sugerir el valor en el campo
+# "Carga del Día". Queda DESACTIVADA hasta que se configure una API Key
+# de Anthropic en los Secrets de la app — mientras no exista esa clave,
+# esta función nunca se llama y en la interfaz solo se muestra un aviso
+# con instrucciones de cómo activarla. No se necesita tocar el código
+# para prenderla ni apagarla, solo agregar o quitar la clave.
+#
+# CÓMO ACTIVARLA (para el cliente, cuando lo decida):
+#   1. Genera una API Key en https://console.anthropic.com/settings/keys
+#   2. En Streamlit Community Cloud: tu app -> Settings -> Secrets, y
+#      agrega este bloque (con la clave real del cliente):
+#
+#      [anthropic]
+#      api_key = "sk-ant-xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+#
+#   3. Guarda. La app detecta la clave sola y la opción de IA aparece
+#      activa en la pestaña "Finalizar Turno" — no hay que reiniciar
+#      nada a mano ni tocar este archivo.
+#   Si en algún momento se quiere desactivar de nuevo, basta con borrar
+#   ese bloque [anthropic] de los Secrets.
+
+def clave_ia_configurada():
+    """Regresa True solo si el cliente ya agregó su API Key de Anthropic
+    en Secrets. Mientras esto sea False, la función de lectura de
+    tickets con IA permanece oculta/deshabilitada en toda la app."""
+    try:
+        return bool(str(st.secrets.get("anthropic", {}).get("api_key", "")).strip())
+    except Exception:
+        return False
+
+
+def leer_monto_ticket_con_ia(archivos):
+    """Envía la(s) foto(s) del ticket a la API de Claude (Anthropic) y le
+    pide que lea el monto total pagado. Solo se ejecuta si
+    clave_ia_configurada() es True. Por ahora solo lee fotos (jpg/png);
+    los PDFs se omiten y se avisa para revisarlos a mano.
+    Regresa (monto_total_detectado, lista_de_detalle_por_archivo)."""
+    try:
+        import requests
+    except ImportError:
+        raise RuntimeError(
+            "Falta instalar la librería 'requests'. Agrégala a requirements.txt "
+            "para poder usar la lectura de tickets con IA."
+        )
+
+    api_key = str(st.secrets["anthropic"]["api_key"]).strip()
+    detalles = []
+    total = 0.0
+
+    for archivo in archivos:
+        nombre_archivo = getattr(archivo, "name", "ticket").lower()
+        if nombre_archivo.endswith(".pdf"):
+            detalles.append(f"{archivo.name}: omitido (por ahora la IA solo lee fotos, no PDFs)")
+            continue
+
+        archivo.seek(0)
+        imagen_b64 = base64.b64encode(archivo.read()).decode("utf-8")
+        media_type = "image/png" if nombre_archivo.endswith(".png") else "image/jpeg"
+
+        respuesta = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json={
+                "model": "claude-sonnet-4-6",
+                "max_tokens": 200,
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": imagen_b64}},
+                        {"type": "text", "text": (
+                            "Esta imagen es un ticket o recibo de carga eléctrica o de "
+                            "gasolina. Responde ÚNICAMENTE con el monto TOTAL pagado, en "
+                            "números, sin signo de moneda ni texto adicional (ejemplo: "
+                            "350.00). Si no logras leer un monto con confianza, responde "
+                            "exactamente: N/D"
+                        )},
+                    ],
+                }],
+            },
+            timeout=30,
+        )
+        respuesta.raise_for_status()
+        texto_respuesta = respuesta.json()["content"][0]["text"].strip()
+
+        numeros_detectados = re.findall(r"[-+]?\d*\.\d+|\d+", texto_respuesta)
+        if numeros_detectados:
+            monto_detectado = float(numeros_detectados[0])
+            total += monto_detectado
+            detalles.append(f"{archivo.name}: ${monto_detectado:,.2f}")
+        else:
+            detalles.append(f"{archivo.name}: no se pudo leer un monto (revísalo a mano)")
+
+    return total, detalles
 
 
 def asegurar_columnas(df, columnas):
@@ -704,6 +812,43 @@ with tab_fin:
             "Subir fotos o PDFs de los Tickets", type=["png", "jpg", "jpeg", "pdf"],
             accept_multiple_files=True, key="uploader_ticket"
         ) or []
+
+    # --- Lectura del monto con IA (solo aparece activa si ya se
+    # configuró la API Key de Anthropic en Secrets; ver instrucciones
+    # junto a la función clave_ia_configurada()) ---
+    if clave_ia_configurada():
+        if archivos_tickets:
+            if st.button("🤖 Leer monto con IA", use_container_width=True):
+                with st.spinner("Leyendo ticket(s) con IA..."):
+                    try:
+                        monto_detectado_ia, detalle_lectura_ia = leer_monto_ticket_con_ia(archivos_tickets)
+                        if monto_detectado_ia > 0:
+                            st.session_state["carga_dia"] = f"{monto_detectado_ia:.2f}"
+                            for linea in detalle_lectura_ia:
+                                st.caption(f"• {linea}")
+                            st.success(
+                                f"✅ Monto detectado: ${monto_detectado_ia:,.2f}. Ya se puso en "
+                                f"'Carga del Día' — revísalo antes de registrar."
+                            )
+                            st.rerun()
+                        else:
+                            st.warning("⚠️ No se pudo leer un monto en los tickets subidos. Escríbelo manualmente.")
+                            for linea in detalle_lectura_ia:
+                                st.caption(f"• {linea}")
+                    except Exception as e:
+                        st.error(f"❌ Error al leer con IA: {e}")
+    else:
+        with st.expander("🤖 Lectura automática de tickets con IA (desactivada)"):
+            st.caption(
+                "Esta opción está desactivada porque aún no hay una API Key de Anthropic "
+                "configurada. Para activarla:\n\n"
+                "1. Genera una API Key en el panel de Claude: "
+                "console.anthropic.com/settings/keys\n"
+                "2. En Streamlit Cloud: tu app → Settings → Secrets, y agrega:\n\n"
+                "   [anthropic]\n"
+                "   api_key = \"sk-ant-xxxxxxxxxxxxxxxxxxxxxxxxxxxx\"\n\n"
+                "3. Guarda. La opción se activa sola, sin tocar el código."
+            )
 
     if st.button("Registrar Fin de Turno", type="primary", use_container_width=True):
         if km_fin is not None:
