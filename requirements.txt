@@ -9,3 +9,5 @@ streamlit-authenticator==0.3.2
 bcrypt
 openpyxl
 streamlit-autorefresh
+gspread
+google-auth
