@@ -813,42 +813,40 @@ with tab_fin:
             accept_multiple_files=True, key="uploader_ticket"
         ) or []
 
-    # --- Lectura del monto con IA (solo aparece activa si ya se
-    # configuró la API Key de Anthropic en Secrets; ver instrucciones
-    # junto a la función clave_ia_configurada()) ---
-    if clave_ia_configurada():
-        if archivos_tickets:
-            if st.button("🤖 Leer monto con IA", use_container_width=True):
-                with st.spinner("Leyendo ticket(s) con IA..."):
-                    try:
-                        monto_detectado_ia, detalle_lectura_ia = leer_monto_ticket_con_ia(archivos_tickets)
-                        if monto_detectado_ia > 0:
-                            st.session_state["carga_dia"] = f"{monto_detectado_ia:.2f}"
-                            for linea in detalle_lectura_ia:
-                                st.caption(f"• {linea}")
-                            st.success(
-                                f"✅ Monto detectado: ${monto_detectado_ia:,.2f}. Ya se puso en "
-                                f"'Carga del Día' — revísalo antes de registrar."
-                            )
-                            st.rerun()
-                        else:
-                            st.warning("⚠️ No se pudo leer un monto en los tickets subidos. Escríbelo manualmente.")
-                            for linea in detalle_lectura_ia:
-                                st.caption(f"• {linea}")
-                    except Exception as e:
-                        st.error(f"❌ Error al leer con IA: {e}")
-    else:
-        with st.expander("🤖 Lectura automática de tickets con IA (desactivada)"):
-            st.caption(
-                "Esta opción está desactivada porque aún no hay una API Key de Anthropic "
-                "configurada. Para activarla:\n\n"
-                "1. Genera una API Key en el panel de Claude: "
-                "console.anthropic.com/settings/keys\n"
-                "2. En Streamlit Cloud: tu app → Settings → Secrets, y agrega:\n\n"
-                "   [anthropic]\n"
-                "   api_key = \"sk-ant-xxxxxxxxxxxxxxxxxxxxxxxxxxxx\"\n\n"
-                "3. Guarda. La opción se activa sola, sin tocar el código."
-            )
+    # --- Lectura automática del monto con IA (solo si ya se configuró
+    # la API Key de Anthropic en Secrets; ver clave_ia_configurada()).
+    # Mientras no exista esa clave, este bloque no muestra NADA en la
+    # interfaz — ni botón ni aviso — para no ensuciar la pantalla del
+    # conductor con una función que todavía no está activa.
+    # Cuando SÍ está activa: en cuanto detecta una imagen nueva subida,
+    # la lee sola (sin que el conductor tenga que darle clic a nada) y
+    # sugiere el monto en 'Carga del Día', pero el campo se queda
+    # editable por si la IA se equivoca (ticket borroso, mal iluminado,
+    # etc.) — el conductor siempre puede corregirlo antes de registrar.
+    if clave_ia_configurada() and archivos_tickets:
+        firma_tickets_actual = tuple(
+            sorted((getattr(a, "name", ""), getattr(a, "size", 0)) for a in archivos_tickets)
+        )
+        if st.session_state.get("_firma_ticket_ia") != firma_tickets_actual:
+            with st.spinner("🤖 Leyendo el ticket con IA..."):
+                try:
+                    monto_detectado_ia, detalle_lectura_ia = leer_monto_ticket_con_ia(archivos_tickets)
+                    st.session_state["_firma_ticket_ia"] = firma_tickets_actual
+                    st.session_state["_detalle_ticket_ia"] = detalle_lectura_ia
+                    st.session_state.pop("_error_ticket_ia", None)
+                    if monto_detectado_ia > 0:
+                        st.session_state["carga_dia"] = f"{monto_detectado_ia:.2f}"
+                        st.rerun()
+                except Exception as e:
+                    st.session_state["_firma_ticket_ia"] = firma_tickets_actual
+                    st.session_state["_error_ticket_ia"] = str(e)
+
+        if st.session_state.get("_detalle_ticket_ia"):
+            st.caption("🤖 Lectura automática del ticket (revisa el monto de arriba antes de registrar):")
+            for linea in st.session_state["_detalle_ticket_ia"]:
+                st.caption(f"• {linea}")
+        if st.session_state.get("_error_ticket_ia"):
+            st.warning(f"⚠️ No se pudo leer el ticket con IA: {st.session_state['_error_ticket_ia']}. Escribe el monto manualmente.")
 
     if st.button("Registrar Fin de Turno", type="primary", use_container_width=True):
         if km_fin is not None:
