@@ -583,16 +583,27 @@ def _hoja_gspread(nombre_hoja):
 
 def iniciar_turno_gspread(nombre_actual, km_inicio):
     """Registra el inicio de turno agregando SOLO una fila nueva al
-    final de 'Hoja 1' (append_row), en vez de reescribir toda la hoja.
-    Regresa (ok, mensaje_error)."""
+    final de 'Hoja 1'. NO se usa append_row() a secas porque Google
+    Sheets 'adivina' dónde termina la tabla escaneando desde arriba, y
+    si esa detección automática se confunde con cualquier hueco en la
+    hoja, mete la fila justo después del encabezado en vez de al final
+    (esto es justo lo que pasó al probarlo). En su lugar, se calcula a
+    mano el número exacto de la siguiente fila vacía (total de filas +
+    1) y se escribe ahí directamente con update() — sin ambigüedad y
+    sin tocar ninguna fila existente. Regresa (ok, mensaje_error)."""
     if not GSPREAD_DISPONIBLE:
         return False, "gspread no está instalado."
     try:
         hoja = _hoja_gspread("Hoja 1")
-        encabezados = hoja.row_values(1)
-        if not encabezados:
-            hoja.append_row(COLUMNAS_ESPERADAS, value_input_option="RAW")
+        todos_los_valores = hoja.get_all_values()
+
+        if not todos_los_valores:
+            hoja.update("A1", [COLUMNAS_ESPERADAS], value_input_option="RAW")
             encabezados = COLUMNAS_ESPERADAS
+            fila_destino = 2
+        else:
+            encabezados = todos_los_valores[0]
+            fila_destino = len(todos_los_valores) + 1  # justo después de la última fila con datos
 
         ahora_cdmx = datetime.now(zona_cdmx).strftime("%Y-%m-%d %H:%M:%S")
         datos_fila = {
@@ -601,7 +612,8 @@ def iniciar_turno_gspread(nombre_actual, km_inicio):
             'Lugar de Carga': '', 'Comentarios': '', 'Comprobante': '',
         }
         valores_en_orden = [datos_fila.get(col, '') for col in encabezados]
-        hoja.append_row(valores_en_orden, value_input_option="RAW")
+        rango_destino = f"A{fila_destino}"
+        hoja.update(rango_destino, [valores_en_orden], value_input_option="RAW")
         return True, None
     except Exception as e:
         return False, str(e)
