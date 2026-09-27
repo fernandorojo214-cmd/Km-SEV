@@ -19,6 +19,19 @@ from openpyxl.utils import get_column_letter
 from streamlit_gsheets import GSheetsConnection
 from streamlit_autorefresh import st_autorefresh
 
+# gspread se usa SOLO para las escrituras de alta frecuencia (Iniciar/
+# Finalizar Turno), para poder escribir una sola fila o una sola celda
+# en vez de reescribir la hoja completa como hace conn.update(). Si no
+# está instalado o las credenciales no calzan con el formato esperado,
+# la app cae sola al método anterior (conn.read + conn.update) — ver
+# _cliente_gspread() más abajo.
+try:
+    import gspread
+    from google.oauth2.service_account import Credentials as CredencialesGoogle
+    GSPREAD_DISPONIBLE = True
+except ImportError:
+    GSPREAD_DISPONIBLE = False
+
 # =========================================================
 # CONFIGURACIÓN (TODO DESDE SECRETS, NADA HARDCODEADO)
 # =========================================================
@@ -437,15 +450,44 @@ def resetear_password(conn, username, nueva_password_plano):
         return False, _mensaje_error_amigable(e)
 
 
-def cerrar_turno_antiguo(conn, nombre, fecha_inicio_turno, km_final, comentario_cierre):
+def cerrar_turno_antiguo(conn, nombre, fecha_inicio_turno, km_inicial, km_final, comentario_cierre):
     """Permite al admin cerrar manualmente, desde la app, un turno viejo
     que quedó abierto por error (el conductor olvidó dar 'Finalizar
     Turno'). El turno se identifica por Nombre + fecha/hora EXACTA de
-    inicio (no por su posición/índice en la hoja), para evitar cerrar la
-    fila equivocada si el Google Sheet cambió entre que se mostró la
-    lista y que el admin dio clic en 'Cerrar turno'. Deja una nota en
-    Comentarios para que quede registro de que fue un cierre
-    administrativo y no el cierre normal que hace el propio conductor."""
+    inicio (no por su posición/índice en la hoja). Intenta primero la
+    vía eficiente con gspread (solo actualiza esa fila); si no está
+    disponible, cae automáticamente al método anterior (leer y
+    reescribir toda la hoja). Deja una nota en Comentarios para que
+    quede registro de que fue un cierre administrativo."""
+    if km_final < km_inicial:
+        return False, f"El kilometraje final ({km_final}) no puede ser menor al inicial ({km_inicial})."
+
+    total_recorrido = float(km_final - km_inicial)
+    nota = "[Cerrado manualmente por admin]"
+    if comentario_cierre:
+        nota += f" {comentario_cierre.strip()}"
+
+    # --- Vía 1 (preferida): actualizar solo esta fila con gspread ---
+    if GSPREAD_DISPONIBLE:
+        ok_gspread, error_gspread = actualizar_fila_turno_gspread(
+            nombre, fecha_inicio_turno,
+            {
+                'Kilometraje Final': float(km_final),
+                'Total Recorrido': total_recorrido,
+                'Comentarios': nota,
+            },
+        )
+        if ok_gspread:
+            st.cache_data.clear()
+            return True, f"Turno de {nombre} cerrado correctamente."
+        # Si fue un error de "no encontrado"/"datos cambiaron", ese
+        # mensaje ya es claro y no tiene caso reintentar con el método
+        # viejo (el problema no es de gspread, es que el turno ya no
+        # existe tal cual). Cualquier otro error sí cae al respaldo.
+        if "no se encontró" in (error_gspread or "").lower():
+            return False, error_gspread
+
+    # --- Vía 2 (respaldo): leer y reescribir la hoja completa ---
     try:
         df = conn.read(worksheet="Hoja 1", ttl=0)
         df = asegurar_columnas(df, COLUMNAS_ESPERADAS)
@@ -465,16 +507,8 @@ def cerrar_turno_antiguo(conn, nombre, fecha_inicio_turno, km_final, comentario_
             return False, "Se encontró más de un turno idéntico; ciérralo manualmente en el Google Sheet para evitar errores."
 
         idx = df[mascara].index[0]
-        km_ini = float(df.at[idx, 'Kilometraje Inicial'])
-        if km_final < km_ini:
-            return False, f"El kilometraje final ({km_final}) no puede ser menor al inicial ({km_ini})."
-
         df.at[idx, 'Kilometraje Final'] = float(km_final)
-        df.at[idx, 'Total Recorrido'] = float(km_final - km_ini)
-
-        nota = "[Cerrado manualmente por admin]"
-        if comentario_cierre:
-            nota += f" {comentario_cierre.strip()}"
+        df.at[idx, 'Total Recorrido'] = total_recorrido
         comentario_actual = df.at[idx, 'Comentarios']
         comentario_actual = str(comentario_actual).strip() if comentario_actual and str(comentario_actual).lower() != "nan" else ""
         df.at[idx, 'Comentarios'] = (comentario_actual + " " + nota).strip()
@@ -484,6 +518,143 @@ def cerrar_turno_antiguo(conn, nombre, fecha_inicio_turno, km_final, comentario_
         return True, f"Turno de {nombre} cerrado correctamente."
     except Exception as e:
         return False, _mensaje_error_amigable(e)
+
+
+# =========================================================
+# ESCRITURA EFICIENTE CON gspread (Iniciar/Finalizar Turno)
+# =========================================================
+# conn.update() de streamlit-gsheets siempre reescribe la hoja COMPLETA,
+# sin importar que solo cambie una fila. Con pocos conductores no se
+# nota, pero conforme crece el histórico esto se vuelve más lento y,
+# sobre todo, más riesgoso: si dos conductores registran su turno casi
+# al mismo tiempo, ambos leen la hoja completa, cada uno la modifica en
+# su copia en memoria, y el que termina de escribir al último
+# SOBRESCRIBE por completo lo que el otro acababa de guardar — se pierde
+# ese registro sin ningún aviso.
+#
+# Las funciones de aquí abajo usan gspread (la misma cuenta de servicio
+# que ya usas, sin credenciales nuevas) para escribir SOLO lo necesario:
+# una fila nueva al iniciar turno (append_row), o solo las celdas que
+# cambian al finalizar/cerrar un turno (batch_update). Como cada
+# conductor solo toca su propia fila, ya no hay forma de que se pisen
+# entre ellos. Si algo no cuadra (gspread no instalado, formato de
+# Secrets distinto al esperado, etc.), cada función regresa un error
+# claro y el código que la llama cae automáticamente al método anterior
+# — la app nunca se rompe por esto.
+
+@st.cache_resource
+def _cliente_gspread():
+    """Cliente de gspread construido con las MISMAS credenciales de
+    servicio que ya usas para streamlit-gsheets (sección
+    [connections.gsheets] de tus Secrets) — no se necesita agregar
+    ninguna credencial nueva."""
+    secretos = st.secrets["connections"]["gsheets"]
+    info_credenciales = {
+        "type": secretos.get("type", "service_account"),
+        "project_id": secretos["project_id"],
+        "private_key_id": secretos["private_key_id"],
+        "private_key": secretos["private_key"],
+        "client_email": secretos["client_email"],
+        "client_id": secretos["client_id"],
+        "auth_uri": secretos.get("auth_uri", "https://accounts.google.com/o/oauth2/auth"),
+        "token_uri": secretos.get("token_uri", "https://oauth2.googleapis.com/token"),
+        "auth_provider_x509_cert_url": secretos.get(
+            "auth_provider_x509_cert_url", "https://www.googleapis.com/oauth2/v1/certs"
+        ),
+        "client_x509_cert_url": secretos["client_x509_cert_url"],
+    }
+    alcances = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive",
+    ]
+    credenciales = CredencialesGoogle.from_service_account_info(info_credenciales, scopes=alcances)
+    return gspread.authorize(credenciales)
+
+
+def _hoja_gspread(nombre_hoja):
+    """Regresa el objeto worksheet de gspread para 'nombre_hoja', usando
+    la misma URL/ID de spreadsheet que ya tienes configurada para
+    streamlit-gsheets."""
+    cliente = _cliente_gspread()
+    url_hoja = st.secrets["connections"]["gsheets"]["spreadsheet"]
+    libro = cliente.open_by_url(url_hoja)
+    return libro.worksheet(nombre_hoja)
+
+
+def iniciar_turno_gspread(nombre_actual, km_inicio):
+    """Registra el inicio de turno agregando SOLO una fila nueva al
+    final de 'Hoja 1' (append_row), en vez de reescribir toda la hoja.
+    Regresa (ok, mensaje_error)."""
+    if not GSPREAD_DISPONIBLE:
+        return False, "gspread no está instalado."
+    try:
+        hoja = _hoja_gspread("Hoja 1")
+        encabezados = hoja.row_values(1)
+        if not encabezados:
+            hoja.append_row(COLUMNAS_ESPERADAS, value_input_option="RAW")
+            encabezados = COLUMNAS_ESPERADAS
+
+        ahora_cdmx = datetime.now(zona_cdmx).strftime("%Y-%m-%d %H:%M:%S")
+        datos_fila = {
+            'Fecha': ahora_cdmx, 'Nombre': nombre_actual, 'Kilometraje Inicial': float(km_inicio),
+            'Kilometraje Final': '', 'Total Recorrido': '', 'Carga del Día': '',
+            'Lugar de Carga': '', 'Comentarios': '', 'Comprobante': '',
+        }
+        valores_en_orden = [datos_fila.get(col, '') for col in encabezados]
+        hoja.append_row(valores_en_orden, value_input_option="RAW")
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+
+def actualizar_fila_turno_gspread(nombre_buscado, fecha_inicio_turno, actualizaciones):
+    """Actualiza SOLO las celdas indicadas (ej. Kilometraje Final, Total
+    Recorrido...) de la fila de 'Hoja 1' que corresponde a un turno
+    específico —identificado por Nombre + fecha/hora EXACTA de inicio,
+    nunca por posición— en una sola llamada (batch_update), sin tocar
+    ninguna otra fila de la hoja. 'actualizaciones' es un diccionario
+    {nombre_de_columna: valor_nuevo}. Regresa (ok, mensaje_error)."""
+    if not GSPREAD_DISPONIBLE:
+        return False, "gspread no está instalado."
+    try:
+        hoja = _hoja_gspread("Hoja 1")
+        encabezados = hoja.row_values(1)
+        valores = hoja.get_all_values()[1:]  # todas las filas, sin el encabezado
+
+        idx_col_nombre = encabezados.index('Nombre')
+        idx_col_fecha = encabezados.index('Fecha')
+        idx_col_km_final = encabezados.index('Kilometraje Final')
+
+        fila_encontrada = None
+        for i, fila in enumerate(valores, start=2):  # la fila 2 es el primer registro
+            nombre_fila = fila[idx_col_nombre].strip().lower() if idx_col_nombre < len(fila) else ""
+            fecha_fila_raw = fila[idx_col_fecha].strip() if idx_col_fecha < len(fila) else ""
+            km_final_fila = fila[idx_col_km_final].strip() if idx_col_km_final < len(fila) else ""
+
+            if nombre_fila != nombre_buscado.strip().lower() or km_final_fila:
+                continue
+            fecha_fila_parseada = pd.to_datetime(fecha_fila_raw, errors='coerce')
+            if pd.isna(fecha_fila_parseada) or fecha_fila_parseada != fecha_inicio_turno:
+                continue
+            fila_encontrada = i
+            break
+
+        if fila_encontrada is None:
+            return False, "No se encontró ese turno (es posible que ya se haya cerrado o que los datos hayan cambiado). Refresca la pestaña."
+
+        cuerpo_actualizaciones = []
+        for nombre_columna, valor_nuevo in actualizaciones.items():
+            if nombre_columna not in encabezados:
+                continue
+            col_idx = encabezados.index(nombre_columna) + 1  # gspread usa columnas base 1
+            celda_a1 = gspread.utils.rowcol_to_a1(fila_encontrada, col_idx)
+            cuerpo_actualizaciones.append({"range": celda_a1, "values": [[valor_nuevo]]})
+
+        if cuerpo_actualizaciones:
+            hoja.batch_update(cuerpo_actualizaciones, value_input_option="RAW")
+        return True, None
+    except Exception as e:
+        return False, str(e)
 
 
 # --- ESTILOS Y MARCA (SEV) ---
@@ -754,14 +925,24 @@ with tab_inicio:
             if not turno_abierto.empty:
                 st.error(f"⚠️ Ya tienes un turno iniciado, {nombre_actual}. Ve a 'Finalizar Turno' primero.")
             else:
-                ahora_cdmx = datetime.now(zona_cdmx).strftime("%Y-%m-%d %H:%M:%S")
-                nuevo_registro = {
-                    'Fecha': ahora_cdmx, 'Nombre': nombre_actual, 'Kilometraje Inicial': float(km_inicio),
-                    'Kilometraje Final': None, 'Total Recorrido': None, 'Carga del Día': None,
-                    'Lugar de Carga': None, 'Comentarios': None, 'Comprobante': None
-                }
-                df_actualizado = pd.concat([df_actualizado, pd.DataFrame([nuevo_registro])], ignore_index=True)
-                conn.update(worksheet="Hoja 1", data=df_actualizado)
+                # Vía 1 (preferida): agregar solo una fila nueva con
+                # gspread, sin tocar el resto de la hoja. Vía 2
+                # (respaldo automático): si gspread no está disponible o
+                # algo falla, se reescribe la hoja completa como antes.
+                registrado_ok = False
+                if GSPREAD_DISPONIBLE:
+                    registrado_ok, error_gspread = iniciar_turno_gspread(nombre_actual, km_inicio)
+
+                if not registrado_ok:
+                    ahora_cdmx = datetime.now(zona_cdmx).strftime("%Y-%m-%d %H:%M:%S")
+                    nuevo_registro = {
+                        'Fecha': ahora_cdmx, 'Nombre': nombre_actual, 'Kilometraje Inicial': float(km_inicio),
+                        'Kilometraje Final': None, 'Total Recorrido': None, 'Carga del Día': None,
+                        'Lugar de Carga': None, 'Comentarios': None, 'Comprobante': None
+                    }
+                    df_actualizado = pd.concat([df_actualizado, pd.DataFrame([nuevo_registro])], ignore_index=True)
+                    conn.update(worksheet="Hoja 1", data=df_actualizado)
+
                 st.cache_data.clear()
                 st.success(f"✅ ¡Buen viaje, {nombre_actual}!")
                 st.balloons()
@@ -864,6 +1045,7 @@ with tab_fin:
             if not pendientes.empty:
                 idx = pendientes.index[-1]
                 km_ini = float(df_actualizado.at[idx, 'Kilometraje Inicial'])
+                fecha_inicio_turno = pd.to_datetime(df_actualizado.at[idx, 'Fecha'], errors='coerce')
 
                 if km_fin >= km_ini:
                     total_dinero = calcular_total_carga(carga_dia)
@@ -877,15 +1059,36 @@ with tab_fin:
 
                     link_final = " ".join(links_archivos) if links_archivos else "No subido"
                     total_recorrido = float(km_fin - km_ini)
+                    lugar_carga_final = str(lugar_carga) if lugar_carga else "N/A"
+                    comentarios_final = str(txt_comentarios) if txt_comentarios else ""
 
-                    df_actualizado.at[idx, 'Kilometraje Final'] = float(km_fin)
-                    df_actualizado.at[idx, 'Total Recorrido'] = total_recorrido
-                    df_actualizado.at[idx, 'Carga del Día'] = total_dinero
-                    df_actualizado.at[idx, 'Lugar de Carga'] = str(lugar_carga) if lugar_carga else "N/A"
-                    df_actualizado.at[idx, 'Comentarios'] = str(txt_comentarios) if txt_comentarios else ""
-                    df_actualizado.at[idx, 'Comprobante'] = link_final
+                    # Vía 1 (preferida): actualizar SOLO esta fila con
+                    # gspread, sin tocar ninguna otra. Vía 2 (respaldo
+                    # automático): si gspread no está disponible o algo
+                    # falla, se reescribe la hoja completa como antes.
+                    registrado_ok = False
+                    if GSPREAD_DISPONIBLE and pd.notna(fecha_inicio_turno):
+                        registrado_ok, error_gspread = actualizar_fila_turno_gspread(
+                            nombre_actual, fecha_inicio_turno,
+                            {
+                                'Kilometraje Final': float(km_fin),
+                                'Total Recorrido': total_recorrido,
+                                'Carga del Día': total_dinero,
+                                'Lugar de Carga': lugar_carga_final,
+                                'Comentarios': comentarios_final,
+                                'Comprobante': link_final,
+                            },
+                        )
 
-                    conn.update(worksheet="Hoja 1", data=df_actualizado)
+                    if not registrado_ok:
+                        df_actualizado.at[idx, 'Kilometraje Final'] = float(km_fin)
+                        df_actualizado.at[idx, 'Total Recorrido'] = total_recorrido
+                        df_actualizado.at[idx, 'Carga del Día'] = total_dinero
+                        df_actualizado.at[idx, 'Lugar de Carga'] = lugar_carga_final
+                        df_actualizado.at[idx, 'Comentarios'] = comentarios_final
+                        df_actualizado.at[idx, 'Comprobante'] = link_final
+                        conn.update(worksheet="Hoja 1", data=df_actualizado)
+
                     st.cache_data.clear()
 
                     st.success(f"🏁 ¡Turno finalizado con éxito, {nombre_actual}!")
@@ -1167,7 +1370,8 @@ if es_admin:
                                 st.warning("⚠️ Ingresa el kilometraje final antes de cerrar.")
                             else:
                                 ok, mensaje = cerrar_turno_antiguo(
-                                    conn, nombre_viejo, fecha_vieja, km_final_viejo, nota_cierre
+                                    conn, nombre_viejo, fecha_vieja,
+                                    float(km_ini_viejo), km_final_viejo, nota_cierre
                                 )
                                 (st.success if ok else st.error)(mensaje)
                                 if ok:
