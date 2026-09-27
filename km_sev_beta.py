@@ -1056,12 +1056,21 @@ METRICAS_REPORTE = [
 ]
 
 
-def generar_reporte_semanal_xlsx(nombres_conductores, fecha_lunes, carga_por_conductor_dia):
+def generar_reporte_semanal_xlsx(nombres_conductores, fecha_lunes, carga_por_conductor_dia,
+                                   datos_externos_por_conductor_dia=None):
     """Genera el reporte semanal en el formato SOLARFLEET (mismo look que el
-    original, sin las referencias rotas). Prellena solo 'Carga de energia'
-    con los datos que la app ya tiene; todo lo demás (efectivo, tarjeta,
-    horas conectadas, viajes, bono) queda en blanco para llenarse a mano
-    con los datos de DiDi. Regresa los bytes del archivo .xlsx."""
+    original, sin las referencias rotas). Prellena 'Carga de energia' con
+    los datos que la app ya tiene, y —si se sube un archivo de DiDi/Uber—
+    también prellena Ganancia en efectivo, Ganancia en tarjeta, horas
+    conectadas, Bono y Viajes por semana con lo que traiga ese archivo.
+    No existe una conexión directa con las apps de DiDi Fleet o Uber (no
+    exponen eso), así que el archivo se sube manualmente y esta función
+    solo usa lo que ya viene agrupado por conductor/día. Lo que no venga
+    en el archivo se queda en blanco para llenarse a mano.
+    Regresa los bytes del archivo .xlsx."""
+    if datos_externos_por_conductor_dia is None:
+        datos_externos_por_conductor_dia = {}
+
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Rendimiento Semanal"
@@ -1166,6 +1175,7 @@ def generar_reporte_semanal_xlsx(nombres_conductores, fecha_lunes, carga_por_con
             F[nombre] = fila_metricas_inicio + idx
 
         carga_dias = carga_por_conductor_dia.get(driver, {})
+        externos_dias = datos_externos_por_conductor_dia.get(driver, {})
 
         for idx, (nombre, tipo) in enumerate(METRICAS_REPORTE):
             fila = fila_metricas_inicio + idx
@@ -1178,6 +1188,10 @@ def generar_reporte_semanal_xlsx(nombres_conductores, fecha_lunes, carga_por_con
                 col_letra = get_column_letter(col)
                 celda = ws.cell(row=fila, column=col)
                 celda.border = borde
+                # Valor que haya traído el archivo de DiDi/Uber para esta
+                # métrica y este día en particular (None si no se subió
+                # archivo, no se mapeó esa columna, o no hay dato ese día)
+                valor_externo = externos_dias.get(i, {}).get(nombre)
 
                 if tipo == "input_dinero":
                     celda.number_format = "#,##0.00"
@@ -1185,12 +1199,18 @@ def generar_reporte_semanal_xlsx(nombres_conductores, fecha_lunes, carga_por_con
                         valor_real = carga_dias.get(i)
                         if valor_real:
                             celda.value = round(float(valor_real), 2)
+                    elif valor_externo is not None:
+                        celda.value = round(float(valor_externo), 2)
                 elif tipo == "input_horas":
                     celda.number_format = "0"
                     if nombre == "Horas solicitadas":
                         celda.value = 8
+                    elif valor_externo is not None:
+                        celda.value = round(float(valor_externo), 1)
                 elif tipo == "input_entero":
                     celda.number_format = "0"
+                    if valor_externo is not None:
+                        celda.value = int(round(float(valor_externo)))
                 elif tipo == "input_texto":
                     pass
                 elif tipo == "calc_efectivo_menos_carga":
@@ -1277,6 +1297,85 @@ def obtener_carga_por_conductor_dia(conn, fecha_lunes):
     return resultado
 
 
+# --- ARCHIVO EXTERNO DE DiDi Fleet / Uber (subida manual) ---
+# No existe una conexión/API directa con las apps de DiDi Fleet ni de
+# Uber para traer estos datos automáticamente, así que el flujo es:
+# el admin exporta/descarga el reporte desde esas apps (CSV o Excel) y
+# lo sube aquí; esta app solo lo LEE y lo agrupa para prellenar el
+# reporte SOLARFLEET — no hay ninguna llamada a servicios externos.
+
+ETIQUETAS_MAPEO_EXTERNO = [
+    ("Ganancia en efectivo", ["efectivo", "cash", "contado"]),
+    ("Ganancia en tarjeta", ["tarjeta", "card"]),
+    ("horas conectadas", ["hora", "hour", "conectad", "online"]),
+    ("Bono", ["bono", "bonus", "incentiv"]),
+    ("Viajes por semana", ["viaje", "trip", "servicio"]),
+]
+
+
+def leer_archivo_externo(archivo):
+    """Lee el CSV o Excel que el admin exportó manualmente de DiDi Fleet
+    o de Uber, a un DataFrame genérico. No se asume ningún formato fijo
+    de columnas — eso se resuelve después con el mapeo que hace el admin
+    en la interfaz."""
+    nombre_archivo = archivo.name.lower()
+    if nombre_archivo.endswith(".csv"):
+        return pd.read_csv(archivo)
+    return pd.read_excel(archivo)
+
+
+def sugerir_columna(columnas, palabras_clave):
+    """Busca, entre los encabezados del archivo subido, uno que contenga
+    alguna de las palabras clave (ej. 'efectivo', 'cash'), para
+    preseleccionar el mapeo y ahorrarle el trabajo al admin. Si no
+    encuentra nada razonable, regresa None y el admin lo elige a mano."""
+    for col in columnas:
+        texto_col = str(col).strip().lower()
+        if any(palabra in texto_col for palabra in palabras_clave):
+            return col
+    return None
+
+
+def agrupar_datos_externos(df_externo, col_nombre, col_fecha, mapeo_metricas, fecha_lunes):
+    """Agrupa el archivo externo (DiDi/Uber) por conductor y día de la
+    semana (0=lunes..6=domingo) usando las columnas que el admin mapeó
+    a mano en la interfaz. Regresa {nombre: {dia_idx: {etiqueta: valor}}},
+    en el mismo 'formato' que espera generar_reporte_semanal_xlsx.
+    IMPORTANTE: el nombre del conductor en el archivo debe coincidir
+    (ignorando mayúsculas/espacios extra) con el nombre registrado en la
+    app — si no coincide, esos datos simplemente no se reflejan."""
+    columnas_metricas_validas = {
+        etiqueta: col for etiqueta, col in mapeo_metricas.items() if col
+    }
+    if not columnas_metricas_validas:
+        return {}
+
+    df = df_externo.copy()
+    df['_fecha_parseada'] = pd.to_datetime(df[col_fecha], errors='coerce')
+    df = df.dropna(subset=['_fecha_parseada'])
+
+    fecha_domingo = fecha_lunes + timedelta(days=6)
+    df = df[(df['_fecha_parseada'].dt.date >= fecha_lunes) & (df['_fecha_parseada'].dt.date <= fecha_domingo)]
+    if df.empty:
+        return {}
+
+    df['_dia_idx'] = (df['_fecha_parseada'].dt.date - fecha_lunes).apply(lambda d: d.days)
+    df['_nombre_norm'] = df[col_nombre].astype(str).str.strip()
+
+    for col in columnas_metricas_validas.values():
+        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+
+    resultado = {}
+    for nombre, grupo in df.groupby('_nombre_norm'):
+        por_dia = {}
+        for dia_idx, sub in grupo.groupby('_dia_idx'):
+            por_dia[dia_idx] = {
+                etiqueta: float(sub[col].sum()) for etiqueta, col in columnas_metricas_validas.items()
+            }
+        resultado[nombre] = por_dia
+    return resultado
+
+
 # --- PESTAÑA 4: DASHBOARD ADMIN ---
 if es_admin:
     with tab_dash:
@@ -1350,8 +1449,7 @@ if es_admin:
         st.caption(
             "Genera el formato semanal de Rendimiento Driver, con los conductores activos y "
             "las fechas ya puestas. La fila 'Carga de energía' se llena sola con los datos de "
-            "la app; el resto (efectivo, tarjeta, horas, viajes, bono) lo completas a mano con "
-            "los datos de DiDi."
+            "la app."
         )
         fecha_lunes_reporte = st.date_input(
             "Lunes de la semana a generar:",
@@ -1361,6 +1459,92 @@ if es_admin:
         # Nos aseguramos de partir siempre de un lunes, sin importar qué día elija el admin.
         fecha_lunes_reporte = fecha_lunes_reporte - timedelta(days=fecha_lunes_reporte.weekday())
         st.caption(f"Semana del {fecha_lunes_reporte.strftime('%d/%m/%Y')} al {(fecha_lunes_reporte + timedelta(days=6)).strftime('%d/%m/%Y')}")
+
+        # --- Autocompletar con el archivo de DiDi Fleet / Uber (opcional) ---
+        # No hay integración directa con esas apps — no exponen una API
+        # pública para esto — así que el flujo es: el admin exporta el
+        # reporte desde DiDi Fleet o Uber (CSV/Excel) y lo sube aquí. La
+        # app solo LEE ese archivo para prellenar el reporte; nunca se
+        # conecta a DiDi ni a Uber directamente.
+        with st.expander("📥 Autocompletar con archivo de DiDi Fleet / Uber (opcional)"):
+            st.caption(
+                "Sube el CSV o Excel que exportas desde DiDi Fleet o Uber. La app intentará "
+                "llenar sola Ganancia en efectivo, Ganancia en tarjeta, horas conectadas, "
+                "Bono y Viajes por semana — revisa el mapeo de columnas antes de generar el "
+                "reporte. Lo que el archivo no traiga, se queda en blanco para llenarlo a mano. "
+                "Importante: el nombre del conductor en el archivo debe coincidir con el "
+                "nombre registrado en la app (mayúsculas/acentos no importan, pero si está "
+                "escrito distinto, esos datos no se van a reflejar)."
+            )
+            archivo_externo_reporte = st.file_uploader(
+                "Archivo de DiDi Fleet / Uber", type=["csv", "xlsx", "xls"],
+                key="archivo_externo_reporte"
+            )
+
+            datos_externos_reporte = {}
+            if archivo_externo_reporte is not None:
+                try:
+                    df_externo_reporte = leer_archivo_externo(archivo_externo_reporte)
+                except Exception as e:
+                    st.error(f"❌ No se pudo leer el archivo: {e}")
+                    df_externo_reporte = None
+
+                if df_externo_reporte is not None and not df_externo_reporte.empty:
+                    st.caption("Vista previa (primeras 5 filas):")
+                    st.dataframe(df_externo_reporte.head(5), use_container_width=True, hide_index=True)
+
+                    columnas_archivo = list(df_externo_reporte.columns)
+                    opciones_columna = ["(no usar)"] + columnas_archivo
+
+                    def _indice_sugerido(palabras_clave):
+                        sugerida = sugerir_columna(columnas_archivo, palabras_clave)
+                        return opciones_columna.index(sugerida) if sugerida else 0
+
+                    col_map1, col_map2 = st.columns(2)
+                    with col_map1:
+                        col_nombre_ext = st.selectbox(
+                            "Columna con el nombre del conductor:",
+                            opciones_columna,
+                            index=_indice_sugerido(["nombre", "driver", "conductor", "name"]),
+                            key="col_nombre_ext_reporte",
+                        )
+                    with col_map2:
+                        col_fecha_ext = st.selectbox(
+                            "Columna con la fecha:",
+                            opciones_columna,
+                            index=_indice_sugerido(["fecha", "date"]),
+                            key="col_fecha_ext_reporte",
+                        )
+
+                    st.caption("Mapea las métricas que traiga tu archivo (deja '(no usar)' si no aplica):")
+                    mapeo_metricas_reporte = {}
+                    cols_metricas_ui = st.columns(len(ETIQUETAS_MAPEO_EXTERNO))
+                    for col_widget, (etiqueta, palabras_clave) in zip(cols_metricas_ui, ETIQUETAS_MAPEO_EXTERNO):
+                        with col_widget:
+                            col_elegida = st.selectbox(
+                                etiqueta, opciones_columna,
+                                index=_indice_sugerido(palabras_clave),
+                                key=f"map_ext_{etiqueta}",
+                            )
+                            mapeo_metricas_reporte[etiqueta] = None if col_elegida == "(no usar)" else col_elegida
+
+                    if col_nombre_ext != "(no usar)" and col_fecha_ext != "(no usar)":
+                        datos_externos_reporte = agrupar_datos_externos(
+                            df_externo_reporte, col_nombre_ext, col_fecha_ext,
+                            mapeo_metricas_reporte, fecha_lunes_reporte,
+                        )
+                        if datos_externos_reporte:
+                            st.success(
+                                f"✅ Se detectaron datos de {len(datos_externos_reporte)} "
+                                f"conductor(es) dentro de la semana seleccionada."
+                            )
+                        else:
+                            st.warning(
+                                "⚠️ No se encontraron filas del archivo dentro de la semana "
+                                "seleccionada (revisa la columna de fecha o el rango de días)."
+                            )
+                    else:
+                        st.info("Selecciona al menos la columna de nombre y de fecha para usar este archivo.")
 
         if st.button("📄 Generar reporte semanal", use_container_width=True):
             df_conductores_activos = leer_usuarios_fresco(conn)
@@ -1376,7 +1560,10 @@ if es_admin:
             else:
                 with st.spinner("Generando reporte..."):
                     carga_dia = obtener_carga_por_conductor_dia(conn, fecha_lunes_reporte)
-                    xlsx_bytes = generar_reporte_semanal_xlsx(nombres_activos, fecha_lunes_reporte, carga_dia)
+                    xlsx_bytes = generar_reporte_semanal_xlsx(
+                        nombres_activos, fecha_lunes_reporte, carga_dia,
+                        datos_externos_por_conductor_dia=datos_externos_reporte,
+                    )
 
                 st.success(f"✅ Reporte generado con {len(nombres_activos)} conductores.")
                 st.download_button(
